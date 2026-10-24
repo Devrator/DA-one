@@ -317,9 +317,9 @@ export default function BenchmarkRunner() {
                 key={idx}
                 className={`prompt-chip ${selectedCategory === cat ? 'active' : ''}`}
                 style={{
-                  background: selectedCategory === cat ? 'var(--accent-primary)' : 'rgba(30, 41, 59, 0.7)',
+                  background: selectedCategory === cat ? 'var(--accent-primary)' : 'var(--bg-surface)',
                   color: selectedCategory === cat ? 'white' : 'var(--text-secondary)',
-                  border: '1px solid rgba(255,255,255,0.08)'
+                  border: selectedCategory === cat ? '1px solid var(--teal-primary)' : '1px solid var(--border-card)'
                 }}
                 onClick={() => setSelectedCategory(cat)}
               >
@@ -440,14 +440,15 @@ export default function BenchmarkRunner() {
                       </td>
                       <td>{statusBadge}</td>
                       <td style={{ maxWidth: '460px' }}>
-                        <div style={{ fontWeight: 500, color: '#f8fafc', fontSize: '0.85rem' }}>{tc.question}</div>
+                        <div style={{ fontWeight: 500, color: 'var(--text-headings)', fontSize: '0.85rem' }}>{tc.question}</div>
                         {tc.generated_sql && (
                           <div style={{
                             fontFamily: 'var(--font-mono)',
                             fontSize: '0.72rem',
-                            color: '#38bdf8',
+                            color: 'var(--teal-primary)',
                             marginTop: '4px',
-                            background: 'rgba(0,0,0,0.3)',
+                            background: 'var(--bg-secondary)',
+                            border: '1px solid var(--border-card)',
                             padding: '4px 8px',
                             borderRadius: '4px',
                             overflow: 'hidden',
@@ -481,7 +482,7 @@ export default function BenchmarkRunner() {
                               <div style={{
                                 fontFamily: 'var(--font-mono)',
                                 fontSize: '0.7rem',
-                                color: '#a7f3d0',
+                                color: '#059669',
                                 marginTop: '4px',
                                 background: 'rgba(16, 185, 129, 0.08)',
                                 border: '1px solid rgba(16, 185, 129, 0.2)',
@@ -496,7 +497,7 @@ export default function BenchmarkRunner() {
                           </div>
                         )}
                         {tc.error_message && (
-                          <div style={{ fontSize: '0.72rem', color: '#fca5a5', marginTop: '3px' }}>
+                          <div style={{ fontSize: '0.72rem', color: '#ef4444', marginTop: '3px' }}>
                             {tc.error_message}
                           </div>
                         )}

@@ -79,7 +79,7 @@ export default function ChartWidget({ chartSpec, data, columns }) {
                   {/* Tooltip value */}
                   <div style={{
                     fontSize: '0.7rem',
-                    color: '#cbd5e1',
+                    color: 'var(--text-secondary)',
                     marginBottom: '6px',
                     fontFamily: 'var(--font-mono)',
                     whiteSpace: 'nowrap'

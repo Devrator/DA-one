@@ -5,7 +5,7 @@ import {
   RefreshCw, Cpu, Server, Compass, Shield, MessageSquare, Flame, Download,
   Coins, ShoppingBag, Users, Package, TrendingUp, Lightbulb, Search, Paperclip,
   MoreVertical, ArrowUpRight, ArrowRight, Settings, FileText, ChevronDown, Check,
-  Bell, User, Sun, X, Lock
+  Bell, User, Sun, Moon, X, Lock
 } from 'lucide-react';
 import ChartWidget from './components/ChartWidget';
 import DataTable from './components/DataTable';
@@ -73,6 +73,19 @@ export default function App() {
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+
+  // Theme Management (Dark / Bright Mode) with localStorage & OS preference support
+  const [theme, setTheme] = useState(() => {
+    const saved = localStorage.getItem('da_one_theme');
+    if (saved) return saved;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    document.body.setAttribute('data-theme', theme);
+    localStorage.setItem('da_one_theme', theme);
+  }, [theme]);
   
   // Interactive notifications state
   const [notifications, setNotifications] = useState([
@@ -280,7 +293,7 @@ export default function App() {
 
   if (!isAuthenticated) {
     return (
-      <div className="app-container" style={{ minHeight: '100vh', position: 'relative' }}>
+      <div className="app-container" data-theme={theme} style={{ minHeight: '100vh', position: 'relative' }}>
         <div className="da-smoky-bg" aria-hidden="true">
           <div className="da-smoke-spot spot-teal-1" />
           <div className="da-smoke-spot spot-copper-1" />
@@ -290,6 +303,8 @@ export default function App() {
         </div>
         <LoginScreen
           initialRole={currentRole}
+          theme={theme}
+          onToggleTheme={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}
           onLogin={(user) => {
             if (user.role) setCurrentRole(user.role);
             setIsAuthenticated(true);
@@ -300,7 +315,7 @@ export default function App() {
   }
 
   return (
-    <div className="app-container">
+    <div className="app-container" data-theme={theme}>
       {/* Smoky Floating Motion Background (Logo Color Palette) */}
       <div className="da-smoky-bg" aria-hidden="true">
         <div className="da-smoke-spot spot-teal-1" />
@@ -474,9 +489,18 @@ export default function App() {
               <span>qwen2.5-coder:7b</span>
             </div>
 
-            {/* Theme Toggle Sun Button */}
-            <button className="da-top-icon-btn" title="Light Executive Theme Active" aria-label="Theme toggle">
-              <Sun size={15} style={{ color: 'var(--copper-primary)' }} />
+            {/* Theme Toggle Button (Dark / Bright Mode) */}
+            <button 
+              className="da-top-icon-btn" 
+              onClick={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}
+              title={theme === 'dark' ? 'Switch to Bright Mode' : 'Switch to Dark Mode'} 
+              aria-label="Theme toggle"
+            >
+              {theme === 'dark' ? (
+                <Sun size={15} style={{ color: '#f59e0b' }} />
+              ) : (
+                <Moon size={15} style={{ color: 'var(--copper-primary)' }} />
+              )}
             </button>
 
             {/* Notification Bell Button & Dropdown */}

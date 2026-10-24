@@ -204,7 +204,7 @@ export default function ChaosArenaView() {
   const OutcomeIcon = outcomeConfig?.icon || Activity;
 
   return (
-    <div style={{ padding: '24px 32px', color: '#e2e8f0', maxWidth: '1440px', margin: '0 auto' }}>
+    <div style={{ padding: '24px 32px', color: 'var(--text-primary)', maxWidth: '1440px', margin: '0 auto' }}>
       {/* Toast alert */}
       {toastMessage && (
         <div style={{

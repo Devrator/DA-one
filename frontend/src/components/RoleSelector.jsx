@@ -47,8 +47,8 @@ export default function RoleSelector({ currentRole, onRoleChange }) {
           gap: '8px',
           padding: '6px 12px',
           borderRadius: '10px',
-          background: '#ffffff',
-          border: '1px solid #e5dfd3',
+          background: 'var(--bg-surface)',
+          border: '1px solid var(--border-card)',
           cursor: 'pointer',
           userSelect: 'none',
           transition: 'all 0.2s ease',
@@ -69,7 +69,7 @@ export default function RoleSelector({ currentRole, onRoleChange }) {
           <div style={{ fontSize: '10px', color: '#8090a7', textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>
             Security Persona
           </div>
-          <div style={{ fontSize: '13px', fontWeight: 600, color: '#1e293b', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-headings)', display: 'flex', alignItems: 'center', gap: '4px' }}>
             {activePersona.username}
             <ChevronDown size={12} color="#8090a7" />
           </div>
@@ -83,9 +83,9 @@ export default function RoleSelector({ currentRole, onRoleChange }) {
         style={{
           padding: '6px 12px',
           borderRadius: '10px',
-          background: '#ffffff',
-          border: '1px solid #e5dfd3',
-          color: '#475569',
+          background: 'var(--bg-surface)',
+          border: '1px solid var(--border-card)',
+          color: 'var(--text-secondary)',
           cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
@@ -106,10 +106,10 @@ export default function RoleSelector({ currentRole, onRoleChange }) {
             top: '110%',
             right: 0,
             width: '340px',
-            background: '#ffffff',
-            border: '1px solid #e5dfd3',
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border-card)',
             borderRadius: '12px',
-            boxShadow: '0 16px 36px rgba(17, 94, 89, 0.12)',
+            boxShadow: 'var(--shadow-lg)',
             zIndex: 9999,
             padding: '8px',
           }}
@@ -156,7 +156,7 @@ export default function RoleSelector({ currentRole, onRoleChange }) {
                   {p.role.replace('_', ' ')}
                 </div>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '12px', fontWeight: 700, color: '#0f172a' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-headings)' }}>
                     {p.username}
                   </div>
                   <div style={{ fontSize: '11px', color: '#64748b', lineHeight: 1.3 }}>
@@ -183,15 +183,15 @@ export default function RoleSelector({ currentRole, onRoleChange }) {
           zIndex: 10000,
         }}>
           <div style={{
-            background: '#0d131f',
-            border: '1px solid #334155',
-            borderRadius: '12px',
+            background: 'var(--bg-surface)',
+            border: '1.5px solid var(--border-card)',
+            borderRadius: '14px',
             width: '720px',
             maxHeight: '85vh',
             overflowY: 'auto',
             padding: '24px',
-            color: '#f8fafc',
-            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.9)',
+            color: 'var(--text-primary)',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)',
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -212,7 +212,7 @@ export default function RoleSelector({ currentRole, onRoleChange }) {
 
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
               <thead>
-                <tr style={{ background: '#1e293b', borderBottom: '1px solid #334155' }}>
+                <tr style={{ background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border-card)' }}>
                   <th style={{ padding: '10px', textAlign: 'left' }}>Role</th>
                   <th style={{ padding: '10px', textAlign: 'left' }}>PostgreSQL RLS Scope</th>
                   <th style={{ padding: '10px', textAlign: 'left' }}>Restricted Columns</th>
@@ -220,15 +220,15 @@ export default function RoleSelector({ currentRole, onRoleChange }) {
                 </tr>
               </thead>
               <tbody>
-                <tr style={{ borderBottom: '1px solid #1e293b' }}>
+                <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                   <td style={{ padding: '10px', fontWeight: 600, color: '#38bdf8' }}>Executive (Admin)</td>
-                  <td style={{ padding: '10px', color: '#cbd5e1' }}>Unrestricted organization-wide access</td>
+                  <td style={{ padding: '10px', color: 'var(--text-secondary)' }}>Unrestricted organization-wide access</td>
                   <td style={{ padding: '10px', color: '#10b981' }}>None (Full visibility)</td>
                   <td style={{ padding: '10px', color: '#10b981' }}>None</td>
                 </tr>
-                <tr style={{ borderBottom: '1px solid #1e293b' }}>
+                <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                   <td style={{ padding: '10px', fontWeight: 600, color: '#fbbf24' }}>Regional Manager</td>
-                  <td style={{ padding: '10px', color: '#cbd5e1' }}>Restricted to assigned region (<code style={{ color: '#fbbf24' }}>region_id</code>)</td>
+                  <td style={{ padding: '10px', color: 'var(--text-secondary)' }}>Restricted to assigned region (<code style={{ color: '#fbbf24' }}>region_id</code>)</td>
                   <td style={{ padding: '10px', color: '#f87171' }}>
                     customers.phone, customers.email, product_catalog.cost_price
                   </td>
@@ -236,7 +236,7 @@ export default function RoleSelector({ currentRole, onRoleChange }) {
                 </tr>
                 <tr>
                   <td style={{ padding: '10px', fontWeight: 600, color: '#a78bfa' }}>Sales Representative</td>
-                  <td style={{ padding: '10px', color: '#cbd5e1' }}>Restricted to own orders (<code style={{ color: '#a78bfa' }}>sales_rep</code>)</td>
+                  <td style={{ padding: '10px', color: 'var(--text-secondary)' }}>Restricted to own orders (<code style={{ color: '#a78bfa' }}>sales_rep</code>)</td>
                   <td style={{ padding: '10px', color: '#f87171' }}>
                     cost_price, phone, email, regional_targets.revenue_target, regions.manager_name
                   </td>

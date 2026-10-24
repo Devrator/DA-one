@@ -184,7 +184,7 @@ export default function ConversationsEvaluationView() {
               background: 'transparent',
               border: 'none',
               outline: 'none',
-              color: '#f8fafc',
+              color: 'var(--text-primary)',
               fontSize: '0.85rem',
               width: '100%',
             }}
@@ -201,9 +201,9 @@ export default function ConversationsEvaluationView() {
                 borderRadius: '6px',
                 fontSize: '11px',
                 fontWeight: 500,
-                border: filterCategory === cat ? '1px solid rgba(56, 189, 248, 0.4)' : '1px solid rgba(51, 65, 85, 0.4)',
-                background: filterCategory === cat ? 'rgba(56, 189, 248, 0.15)' : 'transparent',
-                color: filterCategory === cat ? '#38bdf8' : '#94a3b8',
+                border: filterCategory === cat ? '1px solid rgba(17, 94, 89, 0.4)' : '1px solid var(--border-card)',
+                background: filterCategory === cat ? 'rgba(17, 94, 89, 0.15)' : 'var(--bg-surface)',
+                color: filterCategory === cat ? 'var(--teal-primary)' : 'var(--text-secondary)',
                 cursor: 'pointer',
               }}
             >
@@ -243,15 +243,15 @@ export default function ConversationsEvaluationView() {
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: '#94a3b8' }}>
                     {s.id}
                   </span>
-                  <span style={{ fontWeight: 600, color: '#f8fafc', fontSize: '13px' }}>
+                  <span style={{ fontWeight: 600, color: 'var(--text-headings)', fontSize: '13px' }}>
                     {s.title}
                   </span>
                   <span style={{
                     fontSize: '10px',
                     padding: '1px 6px',
                     borderRadius: '4px',
-                    background: 'rgba(51, 65, 85, 0.4)',
-                    color: '#94a3b8',
+                    background: 'var(--bg-secondary)',
+                    color: 'var(--text-muted)',
                   }}>
                     {s.category}
                   </span>
@@ -274,7 +274,7 @@ export default function ConversationsEvaluationView() {
               {isExpanded && (
                 <div style={{
                   padding: '12px 16px',
-                  background: 'rgba(15, 23, 42, 0.4)',
+                  background: 'rgba(251, 249, 245, 0.6)',
                   borderTop: '1px solid var(--border-subtle)',
                   display: 'flex',
                   flexDirection: 'column',
@@ -285,8 +285,8 @@ export default function ConversationsEvaluationView() {
                       key={t.turn_number}
                       style={{
                         padding: '10px 12px',
-                        background: 'rgba(30, 41, 59, 0.4)',
-                        border: '1px solid rgba(51, 65, 85, 0.3)',
+                        background: 'rgba(255, 255, 255, 0.6)',
+                        border: '1px solid var(--border-card)',
                         borderRadius: '6px',
                       }}
                     >
@@ -302,7 +302,7 @@ export default function ConversationsEvaluationView() {
                           }}>
                             Turn {t.turn_number}
                           </span>
-                          <span style={{ fontSize: '12px', fontWeight: 600, color: '#f1f5f9' }}>
+                          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-headings)' }}>
                             {t.query}
                           </span>
                         </div>
@@ -318,8 +318,8 @@ export default function ConversationsEvaluationView() {
                         <div style={{
                           fontSize: '11px',
                           fontFamily: 'var(--font-mono)',
-                          color: '#38bdf8',
-                          background: 'rgba(15, 23, 42, 0.6)',
+                          color: 'var(--teal-primary)',
+                          background: 'rgba(251, 249, 245, 0.9)',
                           padding: '6px 8px',
                           borderRadius: '4px',
                           marginTop: '4px',

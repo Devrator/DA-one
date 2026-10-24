@@ -8,7 +8,7 @@ export default function DaOneLogo({ height = 36, showText = true, animated = tru
   return (
     <div className={`da-logo-container ${animated ? 'animated-loop' : ''} ${className}`} style={{ display: 'inline-flex', alignItems: 'center', height }}>
       <svg 
-        viewBox="0 0 380 96" 
+        viewBox={showText ? "0 0 380 96" : "0 0 124 96"} 
         height={height} 
         style={{ width: 'auto', maxHeight: '100%', overflow: 'visible' }}
         fill="none" 

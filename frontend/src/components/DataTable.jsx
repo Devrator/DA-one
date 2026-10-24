@@ -94,7 +94,7 @@ export default function DataTable({ data, columns, totalRows }) {
                 border: '1px solid var(--border-subtle)',
                 borderRadius: 'var(--radius-sm)',
                 padding: '4px 8px 4px 26px',
-                color: 'white',
+                color: 'var(--text-primary)',
                 fontSize: '0.78rem',
                 outline: 'none',
               }}

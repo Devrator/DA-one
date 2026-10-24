@@ -153,23 +153,23 @@ export default function SchemaRecoveryView() {
         borderRadius: 'var(--radius-lg)',
         padding: '1.25rem',
       }}>
-        <div style={{ fontSize: '13px', fontWeight: 600, color: '#f8fafc', marginBottom: '8px' }}>
+        <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-headings)', marginBottom: '8px' }}>
           Controlled Schema Drift Applied & Safely Rolled Back
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#cbd5e1' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
             <span style={{ color: '#f59e0b', fontFamily: 'var(--font-mono)' }}>[DDL 1]</span>
             <code>ALTER TABLE sales.product_catalog RENAME TO products;</code>
             <ArrowRight size={13} color="#94a3b8" />
-            <span style={{ color: '#38bdf8' }}>Dynamic Table Aliasing</span>
+            <span style={{ color: 'var(--teal-primary)' }}>Dynamic Table Aliasing</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#cbd5e1' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
             <span style={{ color: '#f59e0b', fontFamily: 'var(--font-mono)' }}>[DDL 2]</span>
             <code>ALTER TABLE sales.sales_order_items RENAME COLUMN discount_pct TO discount_rate;</code>
             <ArrowRight size={13} color="#94a3b8" />
-            <span style={{ color: '#38bdf8' }}>Dynamic Column Aliasing</span>
+            <span style={{ color: 'var(--teal-primary)' }}>Dynamic Column Aliasing</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#cbd5e1' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
             <span style={{ color: '#10b981', fontFamily: 'var(--font-mono)' }}>[CACHE]</span>
             <code>SchemaService.clear_cache() &bull; Fresh SQLAlchemy Inspection</code>
             <ArrowRight size={13} color="#94a3b8" />
@@ -197,7 +197,7 @@ export default function SchemaRecoveryView() {
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: '#94a3b8' }}>
                     {bCase.id}
                   </span>
-                  <span style={{ fontWeight: 600, color: '#f8fafc', fontSize: '13px' }}>
+                  <span style={{ fontWeight: 600, color: 'var(--text-headings)', fontSize: '13px' }}>
                     {bCase.question}
                   </span>
                 </div>
@@ -218,18 +218,18 @@ export default function SchemaRecoveryView() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 {/* Pre-Migration SQL */}
                 <div style={{
-                  background: 'rgba(15, 23, 42, 0.6)',
-                  border: '1px solid rgba(51, 65, 85, 0.4)',
+                  background: 'rgba(251, 249, 245, 0.9)',
+                  border: '1px solid var(--border-card)',
                   borderRadius: '6px',
                   padding: '10px',
                 }}>
-                  <div style={{ fontSize: '10px', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '4px' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>
                     Pre-Migration SQL (Baseline Schema)
                   </div>
                   <pre style={{
                     fontFamily: 'var(--font-mono)',
                     fontSize: '11px',
-                    color: '#e2e8f0',
+                    color: 'var(--text-primary)',
                     margin: 0,
                     whiteSpace: 'pre-wrap',
                     wordBreak: 'break-all',
@@ -240,18 +240,18 @@ export default function SchemaRecoveryView() {
 
                 {/* Post-Migration SQL */}
                 <div style={{
-                  background: 'rgba(15, 23, 42, 0.6)',
-                  border: '1px solid rgba(56, 189, 248, 0.3)',
+                  background: 'rgba(17, 94, 89, 0.05)',
+                  border: '1px solid rgba(17, 94, 89, 0.2)',
                   borderRadius: '6px',
                   padding: '10px',
                 }}>
-                  <div style={{ fontSize: '10px', fontWeight: 600, color: '#38bdf8', textTransform: 'uppercase', marginBottom: '4px' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 600, color: 'var(--teal-primary)', textTransform: 'uppercase', marginBottom: '4px' }}>
                     Post-Migration SQL (Recovered Live Schema)
                   </div>
                   <pre style={{
                     fontFamily: 'var(--font-mono)',
                     fontSize: '11px',
-                    color: '#38bdf8',
+                    color: 'var(--teal-primary)',
                     margin: 0,
                     whiteSpace: 'pre-wrap',
                     wordBreak: 'break-all',

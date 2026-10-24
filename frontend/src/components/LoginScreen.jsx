@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { Shield, Sparkles, Lock, Mail, ArrowRight, CheckCircle2, Database, Cpu, Server, Check } from 'lucide-react';
+import { Shield, Sparkles, Lock, Mail, ArrowRight, CheckCircle2, Database, Cpu, Server, Check, Sun, Moon } from 'lucide-react';
 import DaOneLogo from './DaOneLogo';
 
-export default function LoginScreen({ onLogin, initialRole = 'executive' }) {
+export default function LoginScreen({ onLogin, initialRole = 'executive', theme = 'light', onToggleTheme }) {
   const [selectedRole, setSelectedRole] = useState(initialRole);
   const [email, setEmail] = useState('deepak.sharma@da-one.ai');
   const [password, setPassword] = useState('••••••••••••');
@@ -57,7 +57,30 @@ export default function LoginScreen({ onLogin, initialRole = 'executive' }) {
   return (
     <div className="da-login-screen">
       {/* Centered Login Tile */}
-      <div className="da-login-card">
+      <div className="da-login-card" style={{ position: 'relative' }}>
+        {/* Floating Theme Switcher */}
+        {onToggleTheme && (
+          <button
+            onClick={onToggleTheme}
+            className="da-top-icon-btn"
+            style={{
+              position: 'absolute',
+              top: '16px',
+              right: '16px',
+              width: '32px',
+              height: '32px',
+              borderRadius: '8px'
+            }}
+            title={theme === 'dark' ? 'Switch to Bright Mode' : 'Switch to Dark Mode'}
+          >
+            {theme === 'dark' ? (
+              <Sun size={14} style={{ color: '#f59e0b' }} />
+            ) : (
+              <Moon size={14} style={{ color: 'var(--copper-primary)' }} />
+            )}
+          </button>
+        )}
+
         {/* Top Brand & Emblem Header */}
         <div className="da-login-header">
           <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '8px' }}>

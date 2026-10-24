@@ -181,7 +181,7 @@ export default function SecurityEvaluationView() {
               background: 'transparent',
               border: 'none',
               outline: 'none',
-              color: '#f8fafc',
+              color: 'var(--text-primary)',
               fontSize: '0.85rem',
               width: '100%',
             }}
@@ -198,9 +198,9 @@ export default function SecurityEvaluationView() {
                 borderRadius: '6px',
                 fontSize: '11px',
                 fontWeight: 500,
-                border: filterCategory === cat ? '1px solid rgba(56, 189, 248, 0.4)' : '1px solid rgba(51, 65, 85, 0.4)',
-                background: filterCategory === cat ? 'rgba(56, 189, 248, 0.15)' : 'transparent',
-                color: filterCategory === cat ? '#38bdf8' : '#94a3b8',
+                border: filterCategory === cat ? '1px solid rgba(17, 94, 89, 0.4)' : '1px solid var(--border-card)',
+                background: filterCategory === cat ? 'rgba(17, 94, 89, 0.15)' : 'var(--bg-surface)',
+                color: filterCategory === cat ? 'var(--teal-primary)' : 'var(--text-secondary)',
                 cursor: 'pointer',
               }}
             >
@@ -229,7 +229,7 @@ export default function SecurityEvaluationView() {
                 <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem', color: '#94a3b8' }}>
                   {c.id}
                 </td>
-                <td style={{ fontSize: '0.78rem', color: '#cbd5e1' }}>
+                <td style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
                   {c.category}
                 </td>
                 <td>
@@ -245,7 +245,7 @@ export default function SecurityEvaluationView() {
                   </span>
                 </td>
                 <td>
-                  <div style={{ fontWeight: 600, color: '#f8fafc', fontSize: '0.82rem', marginBottom: '3px' }}>
+                  <div style={{ fontWeight: 600, color: 'var(--text-headings)', fontSize: '0.82rem', marginBottom: '3px' }}>
                     {c.query}
                   </div>
                   <div style={{ fontSize: '0.74rem', color: '#64748b' }}>

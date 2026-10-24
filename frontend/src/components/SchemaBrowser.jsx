@@ -134,7 +134,7 @@ export default function SchemaBrowser({ onSelectTableQuery }) {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                       {col.is_primary_key && <span className="key-badge pk">PK</span>}
                       {col.foreign_key_to && <span className="key-badge fk">FK</span>}
-                      <span style={{ fontFamily: 'var(--font-mono)', color: col.is_primary_key ? '#a5b4fc' : '#e2e8f0' }}>{col.name}</span>
+                      <span style={{ fontFamily: 'var(--font-mono)', color: col.is_primary_key ? 'var(--teal-primary)' : 'var(--text-primary)' }}>{col.name}</span>
                     </div>
                     <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem', fontFamily: 'var(--font-mono)' }}>
                       {col.data_type}
