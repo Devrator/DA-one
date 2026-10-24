@@ -19,10 +19,10 @@ export default function ChartWidget({ chartSpec, data, columns }) {
   const maxVal = Math.max(...values, 1);
   const minVal = Math.min(...values, 0);
 
-  // Vibrant palette
+  // DA-ONE Signature Palette: Teal & Copper shades
   const colors = [
-    '#6366f1', '#8b5cf6', '#ec4899', '#06b6d4', '#10b981',
-    '#f59e0b', '#3b82f6', '#14b8a6', '#f43f5e', '#a855f7'
+    '#115e59', '#c27847', '#14b8a6', '#e08343', '#0d9488',
+    '#a35c32', '#2dd4bf', '#8c4524', '#0f766e', '#d97706'
   ];
 
   return (

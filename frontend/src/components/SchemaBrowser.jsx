@@ -61,7 +61,7 @@ export default function SchemaBrowser({ onSelectTableQuery }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%', maxWidth: '1200px', margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', color: '#ffffff' }}>Schema Catalog & Relations</h2>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', color: 'var(--text-headings)', fontWeight: 700 }}>Schema Catalog & Relations</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
             Target Database: <code style={{ color: 'var(--accent-primary)', fontFamily: 'var(--font-mono)' }}>querypilot_target</code> (Schema: <code style={{ color: '#38bdf8', fontFamily: 'var(--font-mono)' }}>sales</code>)
           </p>
@@ -80,7 +80,7 @@ export default function SchemaBrowser({ onSelectTableQuery }) {
                 border: '1px solid var(--border-subtle)',
                 borderRadius: 'var(--radius-md)',
                 padding: '6px 12px 6px 32px',
-                color: 'white',
+                color: 'var(--text-primary)',
                 fontSize: '0.85rem',
                 outline: 'none',
               }}
@@ -105,7 +105,7 @@ export default function SchemaBrowser({ onSelectTableQuery }) {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <Table size={18} style={{ color: 'var(--accent-primary)' }} />
                   <div>
-                    <h3 style={{ fontSize: '1rem', fontWeight: 600, color: '#ffffff' }}>{tbl.table_name}</h3>
+                    <h3 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-headings)' }}>{tbl.table_name}</h3>
                     <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
                       {tbl.row_count != null ? `${tbl.row_count.toLocaleString()} rows` : '0 rows'} • {tbl.columns.length} columns
                     </div>
@@ -158,8 +158,8 @@ export default function SchemaBrowser({ onSelectTableQuery }) {
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Table size={18} style={{ color: 'var(--accent-primary)' }} />
-                <h3 style={{ fontSize: '1.1rem', color: 'white' }}>Data Preview: sales.{selectedTable}</h3>
+                <Table size={18} style={{ color: 'var(--teal-primary)' }} />
+                <h3 style={{ fontSize: '1.1rem', color: 'var(--text-headings)', fontWeight: 700 }}>Data Preview: sales.{selectedTable}</h3>
               </div>
               <button className="btn-icon" onClick={() => setSelectedTable(null)}>✕</button>
             </div>

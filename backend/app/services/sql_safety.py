@@ -84,7 +84,7 @@ class SQLPolicyEngine:
         max_query_length: int = 4096,
         dialect: str = "postgres",
     ):
-        self.allowed_schemas = allowed_schemas or {"sales", "public"}
+        self.allowed_schemas = allowed_schemas or {"sales", "public", "chaos_test"}
         self.allowed_tables = allowed_tables  # None = all tables in allowed schemas
         self.max_rows = max_rows
         self.max_query_length = max_query_length
@@ -94,7 +94,7 @@ class SQLPolicyEngine:
     def from_settings(cls, allowed_schemas: set[str] | None = None) -> "SQLPolicyEngine":
         settings = get_settings()
         return cls(
-            allowed_schemas=allowed_schemas or {"sales", "public"},
+            allowed_schemas=allowed_schemas or {"sales", "public", "chaos_test"},
             max_rows=settings.sql_max_rows,
             max_query_length=settings.sql_max_query_length,
         )

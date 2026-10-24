@@ -142,7 +142,7 @@ export default function BenchmarkRunner() {
       {/* Header and Controls */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', color: '#ffffff' }}>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', color: 'var(--text-headings)', fontWeight: 700 }}>
             Empirical Evaluation Benchmark
           </h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
@@ -226,8 +226,8 @@ export default function BenchmarkRunner() {
           gap: '10px'
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#ffffff', fontWeight: 600 }}>
-              <Activity size={16} className="animate-spin" style={{ color: 'var(--accent-primary)' }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-headings)', fontWeight: 600 }}>
+              <Activity size={16} className="animate-spin" style={{ color: 'var(--teal-primary)' }} />
               <span>Evaluating Benchmark Test Cases Against Local Ollama & PostgreSQL Target...</span>
             </div>
             <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>

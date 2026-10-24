@@ -987,6 +987,87 @@ async def get_audit_trail(limit: int = 50, db: Session = Depends(get_app_db)):
         for e in events
     ]
 
+# ============================================================================
+# QUERYPILOT CHAOS ARENA ENDPOINTS
+# ============================================================================
+
+from pydantic import BaseModel
+
+class ChaosRunRequest(BaseModel):
+    challenge_id: str
+    question: Optional[str] = None
+    sync: Optional[bool] = False
+
+
+@app.get("/api/v1/chaos/challenges", tags=["Chaos Arena"])
+async def get_chaos_challenges():
+    """Discover available live adversarial challenges."""
+    from app.services.chaos_arena_service import get_chaos_manager
+    return get_chaos_manager().get_challenges()
+
+
+@app.post("/api/v1/chaos/reset", tags=["Chaos Arena"])
+async def reset_chaos_environment():
+    """Safely reset and clone the isolated chaos_test sandbox environment."""
+    from app.services.chaos_arena_service import get_chaos_manager
+    res = get_chaos_manager().reset_isolated_environment()
+    return res
+
+
+@app.post("/api/v1/chaos/runs", tags=["Chaos Arena"])
+async def create_chaos_run(req: ChaosRunRequest, background_tasks: BackgroundTasks):
+    """Trigger a live 8-stage adversarial challenge run in the isolated sandbox."""
+    from app.services.chaos_arena_service import get_chaos_manager
+    manager = get_chaos_manager()
+
+    if req.sync:
+        result = manager.execute_challenge_run(req.challenge_id, req.question)
+        return result
+    else:
+        # Launch execution in background thread
+        def _bg_run():
+            try:
+                manager.execute_challenge_run(req.challenge_id, req.question)
+            except Exception as e:
+                logger.error("Background chaos run failed: %s", e)
+
+        background_tasks.add_task(_bg_run)
+        
+        # Give it a moment to initialize the run record
+        import asyncio
+        await asyncio.sleep(0.15)
+        runs = manager.list_runs(limit=1)
+        if runs:
+            return runs[0]
+        return {"status": "running", "challenge_id": req.challenge_id}
+
+
+@app.get("/api/v1/chaos/runs", tags=["Chaos Arena"])
+async def list_chaos_runs(limit: int = 10):
+    """List recent Chaos Arena challenge runs."""
+    from app.services.chaos_arena_service import get_chaos_manager
+    return get_chaos_manager().list_runs(limit=limit)
+
+
+@app.get("/api/v1/chaos/runs/{run_id}", tags=["Chaos Arena"])
+async def get_chaos_run_status(run_id: str):
+    """Retrieve full run details, live timeline stages, and recovery evidence."""
+    from app.services.chaos_arena_service import get_chaos_manager
+    record = get_chaos_manager().get_run(run_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Chaos run not found")
+    return record
+
+
+@app.post("/api/v1/chaos/runs/{run_id}/cancel", tags=["Chaos Arena"])
+async def cancel_chaos_run(run_id: str):
+    """Pause or cancel an active Chaos Arena run."""
+    from app.services.chaos_arena_service import get_chaos_manager
+    success = get_chaos_manager().cancel_run(run_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Run not found or already completed")
+    return {"status": "cancelled", "run_id": run_id}
+
 
 # ============================================================================
 # HELPERS

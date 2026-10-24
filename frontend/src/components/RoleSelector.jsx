@@ -26,13 +26,13 @@ export default function RoleSelector({ currentRole, onRoleChange }) {
   const getRoleBadgeStyle = (role) => {
     switch (role) {
       case 'executive':
-        return { background: 'rgba(56, 189, 248, 0.15)', border: '1px solid rgba(56, 189, 248, 0.4)', color: '#38bdf8' };
+        return { background: 'rgba(17, 94, 89, 0.1)', border: '1px solid rgba(17, 94, 89, 0.3)', color: '#115e59' };
       case 'regional_manager':
-        return { background: 'rgba(251, 191, 36, 0.15)', border: '1px solid rgba(251, 191, 36, 0.4)', color: '#fbbf24' };
+        return { background: 'rgba(194, 120, 71, 0.12)', border: '1px solid rgba(194, 120, 71, 0.3)', color: '#c27847' };
       case 'sales_rep':
-        return { background: 'rgba(167, 139, 250, 0.15)', border: '1px solid rgba(167, 139, 250, 0.4)', color: '#a78bfa' };
+        return { background: 'rgba(13, 148, 136, 0.12)', border: '1px solid rgba(13, 148, 136, 0.3)', color: '#0d9488' };
       default:
-        return { background: 'rgba(148, 163, 184, 0.15)', border: '1px solid rgba(148, 163, 184, 0.4)', color: '#94a3b8' };
+        return { background: 'rgba(148, 163, 184, 0.15)', border: '1px solid rgba(148, 163, 184, 0.4)', color: '#64748b' };
     }
   };
 
@@ -46,9 +46,9 @@ export default function RoleSelector({ currentRole, onRoleChange }) {
           alignItems: 'center',
           gap: '8px',
           padding: '6px 12px',
-          borderRadius: '8px',
-          background: 'rgba(15, 23, 42, 0.8)',
-          border: '1px solid rgba(51, 65, 85, 0.7)',
+          borderRadius: '10px',
+          background: '#ffffff',
+          border: '1px solid #e5dfd3',
           cursor: 'pointer',
           userSelect: 'none',
           transition: 'all 0.2s ease',
@@ -66,12 +66,12 @@ export default function RoleSelector({ currentRole, onRoleChange }) {
           <User size={13} />
         </div>
         <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>
+          <div style={{ fontSize: '10px', color: '#8090a7', textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>
             Security Persona
           </div>
-          <div style={{ fontSize: '13px', fontWeight: 600, color: '#f1f5f9', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <div style={{ fontSize: '13px', fontWeight: 600, color: '#1e293b', display: 'flex', alignItems: 'center', gap: '4px' }}>
             {activePersona.username}
-            <ChevronDown size={12} color="#94a3b8" />
+            <ChevronDown size={12} color="#8090a7" />
           </div>
         </div>
       </div>
@@ -81,19 +81,20 @@ export default function RoleSelector({ currentRole, onRoleChange }) {
         onClick={() => setMatrixModalOpen(true)}
         title="View 3-Role Permission Matrix"
         style={{
-          padding: '6px 10px',
-          borderRadius: '8px',
-          background: 'transparent',
-          border: '1px solid rgba(51, 65, 85, 0.5)',
-          color: '#94a3b8',
+          padding: '6px 12px',
+          borderRadius: '10px',
+          background: '#ffffff',
+          border: '1px solid #e5dfd3',
+          color: '#475569',
           cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
-          gap: '4px',
+          gap: '5px',
           fontSize: '12px',
+          fontWeight: 600,
         }}
       >
-        <Shield size={13} />
+        <Shield size={13} style={{ color: 'var(--teal-primary)' }} />
         <span>Matrix</span>
       </button>
 
@@ -105,19 +106,19 @@ export default function RoleSelector({ currentRole, onRoleChange }) {
             top: '110%',
             right: 0,
             width: '340px',
-            background: '#090d16',
-            border: '1px solid rgba(56, 189, 248, 0.3)',
-            borderRadius: '10px',
-            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.8), 0 8px 10px -6px rgba(0, 0, 0, 0.8)',
+            background: '#ffffff',
+            border: '1px solid #e5dfd3',
+            borderRadius: '12px',
+            boxShadow: '0 16px 36px rgba(17, 94, 89, 0.12)',
             zIndex: 9999,
-            padding: '6px',
+            padding: '8px',
           }}
         >
-          <div style={{ padding: '8px 10px', borderBottom: '1px solid #1e293b', marginBottom: '4px' }}>
-            <div style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase' }}>
+          <div style={{ padding: '8px 10px', borderBottom: '1px solid #f1ece4', marginBottom: '6px' }}>
+            <div style={{ fontSize: '11px', color: '#115e59', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
               Switch Verified Identity (Server-Enforced)
             </div>
-            <div style={{ fontSize: '11px', color: '#64748b' }}>
+            <div style={{ fontSize: '11px', color: '#8090a7' }}>
               Permissions and PostgreSQL RLS resolve server-side.
             </div>
           </div>
@@ -131,15 +132,15 @@ export default function RoleSelector({ currentRole, onRoleChange }) {
                   setIsOpen(false);
                 }}
                 style={{
-                  padding: '8px 10px',
-                  borderRadius: '6px',
+                  padding: '9px 12px',
+                  borderRadius: '8px',
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'flex-start',
                   gap: '8px',
-                  background: isSelected ? 'rgba(56, 189, 248, 0.1)' : 'transparent',
-                  border: isSelected ? '1px solid rgba(56, 189, 248, 0.3)' : '1px solid transparent',
-                  marginBottom: '2px',
+                  background: isSelected ? 'rgba(17, 94, 89, 0.08)' : 'transparent',
+                  border: isSelected ? '1px solid rgba(17, 94, 89, 0.25)' : '1px solid transparent',
+                  marginBottom: '3px',
                   transition: 'background 0.15s ease',
                 }}
               >
@@ -155,14 +156,14 @@ export default function RoleSelector({ currentRole, onRoleChange }) {
                   {p.role.replace('_', ' ')}
                 </div>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: '#f8fafc' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 700, color: '#0f172a' }}>
                     {p.username}
                   </div>
-                  <div style={{ fontSize: '11px', color: '#94a3b8', lineHeight: 1.3 }}>
+                  <div style={{ fontSize: '11px', color: '#64748b', lineHeight: 1.3 }}>
                     {p.description}
                   </div>
                 </div>
-                {isSelected && <Check size={14} color="#38bdf8" style={{ marginTop: '4px' }} />}
+                {isSelected && <Check size={14} color="#115e59" style={{ marginTop: '4px' }} />}
               </div>
             );
           })}
