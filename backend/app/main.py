@@ -27,6 +27,7 @@ from app.database import (
 from app.models import (
     Connection, QueryRecord, EvaluationRun, EvaluationResult,
     AuditEvent, BusinessGlossary, ConversationSession,
+    DiscoveryRun, DiscoveryFinding,
 )
 from app.schemas import (
     HealthResponse, ReadinessResponse,
@@ -36,6 +37,7 @@ from app.schemas import (
     SchemaResponse, TableInfo,
     EvaluationRunCreate, EvaluationRunResponse, EvaluationRunDetailResponse, EvaluationResultResponse,
     AuditEventResponse, ErrorResponse,
+    TargetDbSettingsUpdate, LlmSettingsUpdate, SettingsApplyResult,
 )
 from app.services.llm_provider import LLMProvider
 from app.services.schema_service import SchemaService
@@ -45,6 +47,9 @@ from app.services.query_executor import QueryExecutor, ExecutionResult
 from app.services.chart_service import select_chart_type
 from app.services.explanation_service import ExplanationService
 from app.services.role_service import resolve_user_context, UserSecurityContext
+from app.services.validation_service import (
+    SchemaGroundingValidator, GroundingResult, build_evidence,
+)
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -68,6 +73,7 @@ _sql_generator: Optional[SQLGenerator] = None
 _query_executor: Optional[QueryExecutor] = None
 _explanation_service: Optional[ExplanationService] = None
 _target_engine = None
+_active_schema_name: str = "sales"
 
 
 def get_llm() -> LLMProvider:
@@ -119,6 +125,21 @@ def get_target_engine():
     return _target_engine
 
 
+def _ensure_startup_migrations():
+    """Additively migrate app DB columns created after initial deployment."""
+    from sqlalchemy import inspect as sa_inspect
+    engine = get_app_engine()
+    insp = sa_inspect(engine)
+    if "query_records" in insp.get_table_names():
+        cols = {c["name"] for c in insp.get_columns("query_records")}
+        if "evidence" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE query_records ADD COLUMN IF NOT EXISTS evidence JSON"
+                ))
+            logger.info("Migrated: added query_records.evidence column")
+
+
 # ---------------------------------------------------------------------------
 # App lifecycle
 # ---------------------------------------------------------------------------
@@ -132,9 +153,13 @@ async def lifespan(app: FastAPI):
     # Initialize application database tables
     try:
         init_app_db()
+        _ensure_startup_migrations()
         logger.info("Application database initialized")
     except Exception as e:
         logger.error("Failed to initialize app database: %s", e)
+
+    # Start proactive discovery scheduler (Discover & Early Warnings)
+    _start_discovery_scheduler()
 
     yield
 
@@ -425,12 +450,66 @@ async def submit_query(req: QueryRequest, request: Request, db: Session = Depend
             })
             return QueryStatus.model_validate(record)
 
+        # 3.5 Anti-hallucination grounding gate — every table/column in the SQL
+        # must exist in the live discovered schema; hallucinated identifiers are
+        # rejected and repaired before anything reaches PostgreSQL.
+        grounding = SchemaGroundingValidator(schema, default_schema=schema_name).validate(gen_result.sql)
+        grounding_repair_attempts = 0
+        while not grounding.grounded and grounding_repair_attempts < 2:
+            grounding_repair_attempts += 1
+            logger.info(
+                "Grounding repair attempt %d: %s",
+                grounding_repair_attempts, "; ".join(grounding.violations),
+            )
+            repair_gen = generator.attempt_execution_repair(
+                question=req.question,
+                original_sql=gen_result.sql,
+                db_error="; ".join(grounding.violations)
+                + ". These objects DO NOT exist in the database. Rewrite the query using ONLY tables and columns present in the schema context, or state that the question cannot be answered with available data.",
+                schema_context=schema_context,
+                role=user_ctx.role,
+            )
+            if not (repair_gen.success and repair_gen.sql):
+                break
+            gen_result.sql = repair_gen.sql
+            gen_result.tables_used = repair_gen.tables_used or gen_result.tables_used
+            gen_result.assumptions = repair_gen.assumptions or gen_result.assumptions
+            grounding = SchemaGroundingValidator(schema, default_schema=schema_name).validate(gen_result.sql)
+
+        if not grounding.grounded:
+            record.status = "blocked"
+            record.generated_sql = gen_result.sql
+            record.error_message = (
+                "Answer withheld: the generated query referenced data that does not exist in the database. "
+                + "; ".join(grounding.violations)
+            )
+            record.error_category = "hallucinated_schema_objects"
+            record.evidence = {
+                "verified": False,
+                "status": "blocked_hallucination",
+                "schema_grounding": {
+                    "passed": False,
+                    "hallucinated_tables": grounding.hallucinated_tables,
+                    "hallucinated_columns": grounding.hallucinated_columns,
+                },
+            }
+            record.total_time_ms = (time.time() - start_time) * 1000
+            db.commit()
+            db.refresh(record)
+            _audit(db, "query.blocked.hallucination", "query", record.id, {
+                "question": req.question,
+                "user_role": user_ctx.role,
+                "violations": grounding.violations,
+            })
+            return QueryStatus.model_validate(record)
+
         record.generated_sql = gen_result.sql
         record.validated_sql = gen_result.sql
         record.query_plan = {
             "tables_used": gen_result.tables_used,
             "assumptions": gen_result.assumptions,
             "repair_attempts": gen_result.repair_attempts,
+            "grounding_repair_attempts": grounding_repair_attempts,
         }
 
         # 4. Execute query under PostgreSQL database-level RLS
@@ -496,9 +575,10 @@ async def submit_query(req: QueryRequest, request: Request, db: Session = Depend
         record.chart_spec = chart_spec
         db.commit()
 
-        # 7. Generate explanation with prompt injection safeguards
+        # 7. Generate explanation with prompt injection safeguards and
+        # numeric evidence verification (anti-hallucination gate)
         explanation_svc = get_explanation_service()
-        explanation = explanation_svc.generate_explanation(
+        explanation, explanation_grounding = explanation_svc.generate_explanation(
             question=req.question,
             sql=gen_result.sql,
             columns=exec_result.columns,
@@ -508,7 +588,27 @@ async def submit_query(req: QueryRequest, request: Request, db: Session = Depend
         record.explanation = explanation
         record.assumptions = gen_result.assumptions
 
-        # 8. Complete
+        # 8. Build evidence provenance record (visible to the user)
+        columns_used: list[str] = []
+        for t in schema.tables:
+            full = f"{t.schema_name}.{t.table_name}".lower()
+            if any(full == v or full.endswith("." + v) or v.endswith(full) or v == t.table_name.lower()
+                   for v in [x.lower() for x in gen_result.tables_used]):
+                columns_used.extend(c.name for c in t.columns)
+        record.evidence = build_evidence(
+            tables_used=gen_result.tables_used,
+            columns_used=columns_used,
+            sql=gen_result.sql,
+            row_count=exec_result.row_count,
+            execution_time_ms=exec_result.execution_time_ms,
+            grounding=grounding,
+            explanation_grounded=explanation_grounding.get("passed", False),
+            unverified_claims=explanation_grounding.get("unverified_claims", []),
+            model_name=gen_result.model_name,
+        )
+        record.evidence["explanation_source"] = explanation_grounding.get("source")
+
+        # 9. Complete
         record.status = "completed"
         record.completed_at = datetime.now(timezone.utc)
         record.total_time_ms = (time.time() - start_time) * 1000
@@ -614,6 +714,118 @@ async def query_history(
         page=page,
         page_size=page_size,
     )
+
+
+# ============================================================================
+# STATS / OVERVIEW (real aggregates from the live target database)
+# ============================================================================
+
+_REVENUE_EXPR = "(i.quantity * i.unit_price * (1 - i.discount_pct / 100))"
+
+
+@app.get("/api/v1/stats/overview", tags=["Stats"])
+async def stats_overview():
+    """Compute real business aggregates directly from the live PostgreSQL
+    target database. Every number rendered on the Analytics Workspace and
+    Executive Reports screens originates here (no hardcoded values)."""
+    engine = get_target_engine()
+    s = _active_schema_name
+    rx = _REVENUE_EXPR
+    try:
+        with engine.connect() as conn:
+            total_sales = float(conn.execute(text(f"""
+                SELECT COALESCE(ROUND(SUM({rx})::numeric, 2), 0)
+                FROM {s}.sales_orders o
+                JOIN {s}.sales_order_items i ON i.order_id = o.order_id
+                WHERE o.status = 'completed'
+            """))  .scalar() or 0)
+            total_orders = int(conn.execute(text(f"SELECT COUNT(*) FROM {s}.sales_orders")).scalar() or 0)
+            total_customers = int(conn.execute(text(f"SELECT COUNT(*) FROM {s}.customers")).scalar() or 0)
+            total_products = int(conn.execute(text(f"SELECT COUNT(*) FROM {s}.product_catalog")).scalar() or 0)
+
+            region_rows = conn.execute(text(f"""
+                SELECT r.region_name,
+                       COALESCE(ROUND(SUM({rx})::numeric, 2), 0) AS revenue,
+                       COUNT(DISTINCT o.order_id) AS orders,
+                       COUNT(DISTINCT c.customer_id) AS customers
+                FROM {s}.regions r
+                LEFT JOIN {s}.sales_orders o ON o.region_id = r.region_id AND o.status = 'completed'
+                LEFT JOIN {s}.sales_order_items i ON i.order_id = o.order_id
+                LEFT JOIN {s}.customers c ON c.customer_id = o.customer_id
+                GROUP BY r.region_name
+                ORDER BY revenue DESC
+            """)).fetchall()
+
+            top_customer_rows = conn.execute(text(f"""
+                SELECT c.company_name,
+                       COUNT(DISTINCT o.order_id) AS orders,
+                       COALESCE(ROUND(SUM({rx})::numeric, 2), 0) AS revenue
+                FROM {s}.customers c
+                JOIN {s}.sales_orders o ON o.customer_id = c.customer_id AND o.status = 'completed'
+                JOIN {s}.sales_order_items i ON i.order_id = o.order_id
+                GROUP BY c.company_name
+                ORDER BY revenue DESC
+                LIMIT 5
+            """)).fetchall()
+
+            cat_rev_rows = conn.execute(text(f"""
+                SELECT p.category,
+                       COALESCE(ROUND(SUM({rx})::numeric, 2), 0) AS revenue,
+                       COUNT(DISTINCT p.product_id) AS items
+                FROM {s}.product_catalog p
+                LEFT JOIN {s}.sales_order_items i ON i.product_id = p.product_id
+                LEFT JOIN {s}.sales_orders o ON o.order_id = i.order_id AND o.status = 'completed'
+                GROUP BY p.category
+                ORDER BY revenue DESC
+            """)).fetchall()
+
+            cat_margin_rows = conn.execute(text(f"""
+                SELECT category,
+                       ROUND(AVG((unit_price - cost_price) / NULLIF(unit_price, 0) * 100)::numeric, 1) AS avg_margin
+                FROM {s}.product_catalog
+                GROUP BY category
+            """)).fetchall()
+    except Exception as exc:  # target DB unreachable / schema changed
+        raise HTTPException(status_code=503, detail=f"Stats unavailable from target DB: {exc}")
+
+    margin_by_cat = {r[0]: float(r[1] or 0) for r in cat_margin_rows}
+    denom = total_sales or 1
+
+    return {
+        "source": "live_postgresql_target_database",
+        "schema": s,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "totals": {
+            "total_sales": round(total_sales, 2),
+            "total_orders": total_orders,
+            "total_customers": total_customers,
+            "total_products": total_products,
+        },
+        "regions": [
+            {
+                "region": r[0],
+                "revenue": float(r[1] or 0),
+                "orders": int(r[2] or 0),
+                "customers": int(r[3] or 0),
+                "avg_order_value": round(float(r[1] or 0) / (int(r[2] or 0) or 1), 2),
+                "pct": round(float(r[1] or 0) / denom * 100, 1),
+            }
+            for r in region_rows
+        ],
+        "top_customers": [
+            {"company": tc[0], "orders": int(tc[1] or 0), "revenue": float(tc[2] or 0)}
+            for tc in top_customer_rows
+        ],
+        "product_categories": [
+            {
+                "category": cr[0],
+                "revenue": float(cr[1] or 0),
+                "items": int(cr[2] or 0),
+                "avg_margin_pct": margin_by_cat.get(cr[0], 0.0),
+            }
+            for cr in cat_rev_rows
+        ],
+    }
 
 
 # ============================================================================
@@ -741,6 +953,216 @@ async def get_stats(db: Session = Depends(get_app_db)):
         ],
     }
 
+
+
+# ============================================================================
+# SETTINGS: LIVE DATABASE & LLM CONFIGURATION (Settings screen)
+# ============================================================================
+
+def _persist_env(updates: dict[str, str]):
+    """Update .env values in-place (create-or-replace keys) so config survives restarts."""
+    from pathlib import Path
+    # Project root = parent of backend/ (workspace .env lives there)
+    env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+    lines: list[str] = []
+    if env_path.exists():
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    remaining = dict(updates)
+    out: list[str] = []
+    for line in lines:
+        key = line.split("=", 1)[0].strip() if "=" in line and not line.strip().startswith("#") else None
+        if key and key.upper() in remaining:
+            out.append(f"{key.upper()}={remaining.pop(key.upper())}")
+        else:
+            out.append(line)
+    for key, val in remaining.items():
+        out.append(f"{key}={val}")
+    env_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
+@app.get("/api/v1/settings/runtime", tags=["Settings"])
+async def get_runtime_settings():
+    """Return the ACTIVE runtime configuration (real values, not defaults)."""
+    s = get_settings()
+    global _active_schema_name
+    return {
+        "target_db": {
+            "host": s.target_db_host,
+            "port": s.target_db_port,
+            "database_name": s.target_db_name,
+            "username": s.target_db_user,
+            "schema_name": _active_schema_name,
+            "statement_timeout_ms": s.sql_statement_timeout_ms,
+            "has_password": bool(s.target_db_password),
+        },
+        "llm": {
+            "provider": s.llm_provider,
+            "model": s.llm_model,
+            "base_url": s.llm_base_url,
+            "temperature": s.llm_temperature,
+        },
+        "query_limits": {
+            "max_rows": s.sql_max_rows,
+            "max_query_length": s.sql_max_query_length,
+        },
+        "database_url": str(get_app_engine().url).split("@")[0].split("://")[0] + "://***",
+    }
+
+
+@app.post("/api/v1/settings/target-db/test", response_model=SettingsApplyResult, tags=["Settings"])
+async def test_target_db_settings(req: TargetDbSettingsUpdate):
+    """Real connectivity test against the proposed target PostgreSQL database."""
+    try:
+        engine = create_target_engine(
+            host=req.host, port=req.port, dbname=req.database_name,
+            user=req.username, password=req.password,
+            statement_timeout_ms=req.statement_timeout_ms,
+        )
+        with engine.connect() as conn:
+            version = conn.execute(text("SHOW server_version")).scalar()
+            result = conn.execute(text(
+                "SELECT count(*) FROM information_schema.tables WHERE table_schema = :schema"
+            ), {"schema": req.schema_name})
+            table_count = result.scalar() or 0
+        engine.dispose()
+        return SettingsApplyResult(
+            success=True,
+            message=f"Connected to PostgreSQL {version}. Found {table_count} tables in schema '{req.schema_name}'.",
+            detail={"server_version": version, "tables_found": table_count, "schema": req.schema_name},
+        )
+    except Exception as e:
+        return SettingsApplyResult(success=False, message=f"Connection failed: {str(e)[:250]}")
+
+
+@app.post("/api/v1/settings/target-db/apply", response_model=SettingsApplyResult, tags=["Settings"])
+async def apply_target_db_settings(req: TargetDbSettingsUpdate, db: Session = Depends(get_app_db)):
+    """Validate, apply and persist a new target PostgreSQL connection at runtime."""
+    global _target_engine, _active_schema_name
+    try:
+        new_engine = create_target_engine(
+            host=req.host, port=req.port, dbname=req.database_name,
+            user=req.username, password=req.password,
+            statement_timeout_ms=req.statement_timeout_ms,
+        )
+        with new_engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+            result = conn.execute(text(
+                "SELECT count(*) FROM information_schema.tables WHERE table_schema = :schema"
+            ), {"schema": req.schema_name})
+            table_count = result.scalar() or 0
+        if table_count == 0:
+            new_engine.dispose()
+            return SettingsApplyResult(
+                success=False,
+                message=f"Connected, but schema '{req.schema_name}' contains no tables. Aborted — target not applied.",
+            )
+    except Exception as e:
+        return SettingsApplyResult(success=False, message=f"Connection failed — not applied: {str(e)[:250]}")
+
+    # Swap live engine only after successful verification
+    if _target_engine is not None:
+        try:
+            _target_engine.dispose()
+        except Exception:
+            pass
+    _target_engine = new_engine
+    _active_schema_name = req.schema_name
+
+    # Update in-memory settings + persist to .env
+    s = get_settings()
+    s.target_db_host = req.host
+    s.target_db_port = req.port
+    s.target_db_name = req.database_name
+    s.target_db_user = req.username
+    s.sql_statement_timeout_ms = req.statement_timeout_ms
+    if req.password:
+        s.target_db_password = req.password
+    get_schema_service().clear_cache()
+
+    try:
+        _persist_env({
+            "TARGET_DB_HOST": req.host,
+            "TARGET_DB_PORT": str(req.port),
+            "TARGET_DB_NAME": req.database_name,
+            "TARGET_DB_USER": req.username,
+            "SQL_STATEMENT_TIMEOUT_MS": str(req.statement_timeout_ms),
+        })
+    except Exception as e:
+        logger.warning("Could not persist target DB settings to .env: %s", e)
+
+    _audit(db, "settings.target_db.applied", "settings", "runtime", {
+        "host": req.host, "port": req.port, "database": req.database_name, "schema": req.schema_name,
+    })
+    return SettingsApplyResult(
+        success=True,
+        message=f"Target database applied. {table_count} tables in '{req.schema_name}' are now live for analysis.",
+        detail={"tables_found": table_count},
+    )
+
+
+@app.post("/api/v1/settings/llm/test", response_model=SettingsApplyResult, tags=["Settings"])
+async def test_llm_settings(req: LlmSettingsUpdate):
+    """Real health check against the proposed Ollama endpoint and model."""
+    probe = LLMProvider(model=req.model, base_url=req.base_url)
+    try:
+        health = probe.check_health()
+    finally:
+        probe.close()
+    if health["status"] == "healthy":
+        return SettingsApplyResult(
+            success=True,
+            message=f"Ollama online. Model '{req.model}' available.",
+            detail={"available_models": health.get("available_models", [])},
+        )
+    return SettingsApplyResult(
+        success=False,
+        message=f"Model check failed: {health.get('error') or health['status']}. Available: {', '.join(health.get('available_models', [])) or 'none'}",
+    )
+
+
+@app.post("/api/v1/settings/llm/apply", response_model=SettingsApplyResult, tags=["Settings"])
+async def apply_llm_settings(req: LlmSettingsUpdate):
+    """Verify and hot-swap the active LLM provider used by all AI services."""
+    global _llm, _sql_generator, _explanation_service
+    probe = LLMProvider(model=req.model, base_url=req.base_url)
+    try:
+        health = probe.check_health()
+    finally:
+        probe.close()
+    if health["status"] != "healthy":
+        return SettingsApplyResult(success=False, message=f"Model '{req.model}' not available: {health.get('error')}")
+
+    s = get_settings()
+    s.llm_model = req.model
+    s.llm_base_url = req.base_url
+    if req.temperature is not None:
+        s.llm_temperature = req.temperature
+
+    old_llm = _llm
+    _llm = LLMProvider(
+        provider=s.llm_provider, model=s.llm_model, base_url=s.llm_base_url,
+        temperature=s.llm_temperature, max_tokens=s.llm_max_tokens,
+        timeout=s.llm_request_timeout,
+    )
+    if old_llm:
+        try:
+            old_llm.close()
+        except Exception:
+            pass
+    # Rebind singletons that captured the old provider
+    _sql_generator = SQLGenerator(llm=_llm, policy_engine=get_sql_policy())
+    _explanation_service = ExplanationService(llm=_llm)
+
+    try:
+        _persist_env({
+            "LLM_MODEL": req.model,
+            "LLM_BASE_URL": req.base_url,
+            **({"LLM_TEMPERATURE": str(req.temperature)} if req.temperature is not None else {}),
+        })
+    except Exception as e:
+        logger.warning("Could not persist LLM settings to .env: %s", e)
+
+    return SettingsApplyResult(success=True, message=f"Model '{req.model}' applied and active for all AI services.")
 
 
 # ============================================================================
@@ -986,6 +1408,187 @@ async def get_audit_trail(limit: int = 50, db: Session = Depends(get_app_db)):
         }
         for e in events
     ]
+
+# ============================================================================
+# PHASE 2: DISCOVER & EARLY WARNINGS (proactive intelligence)
+# ============================================================================
+
+from pydantic import BaseModel as _DiscoveryBaseModel
+
+_discovery_thread = None
+_discovery_stop = None
+_discovery_last_run: dict = {"status": "idle"}
+
+
+def _serialize_finding(f: DiscoveryFinding) -> dict:
+    return {
+        "id": f.id,
+        "run_id": f.run_id,
+        "signature": f.signature,
+        "severity": f.severity,
+        "score": f.score,
+        "finding_type": f.finding_type,
+        "title": f.title,
+        "narrative": f.narrative,
+        "hypothesis": f.hypothesis,
+        "suggested_next_steps": f.suggested_next_steps,
+        "metric_name": f.metric_name,
+        "dimension_name": f.dimension_name,
+        "segment": f.segment,
+        "baseline_value": f.baseline_value,
+        "current_value": f.current_value,
+        "delta_abs": f.delta_abs,
+        "delta_pct": f.delta_pct,
+        "comparison_label": f.comparison_label,
+        "period_label": f.period_label,
+        "source_tables": f.source_tables,
+        "calculation": f.calculation,
+        "supporting_data": f.supporting_data,
+        "chart_spec": f.chart_spec,
+        "assumptions": f.assumptions,
+        "limitations": f.limitations,
+        "explore_question": f.explore_question,
+        "role": f.role,
+        "status": f.status,
+        "data_freshness_at": f.data_freshness_at.isoformat() if f.data_freshness_at else None,
+        "created_at": f.created_at.isoformat() if f.created_at else None,
+    }
+
+
+def _run_discovery_and_track(trigger: str, role: str | None) -> None:
+    global _discovery_last_run
+    from app.services.discovery_service import run_discovery_job
+    _discovery_last_run = {"status": "running", "trigger": trigger}
+    try:
+        result = run_discovery_job(trigger=trigger, role=role)
+        _discovery_last_run = {"status": result.get("status", "completed"), "trigger": trigger, **result}
+    except Exception as exc:  # defensive; job already records failure status
+        _discovery_last_run = {"status": "failed", "trigger": trigger, "error": str(exc)[:300]}
+
+
+def _start_discovery_scheduler() -> None:
+    """Background scheduler that periodically runs discovery on the live DB."""
+    global _discovery_thread, _discovery_stop
+    settings = get_settings()
+    if not (settings.discovery_enabled and settings.discovery_schedule_enabled):
+        logger.info("Discovery scheduler disabled by configuration")
+        return
+    if _discovery_thread and _discovery_thread.is_alive():
+        return
+    import threading
+    _discovery_stop = threading.Event()
+
+    def _loop():
+        # initial delay so startup/tests aren't blocked
+        if _discovery_stop.wait(settings.discovery_initial_delay_seconds):
+            return
+        while not _discovery_stop.is_set():
+            try:
+                _run_discovery_and_track("scheduled", None)
+            except Exception as exc:
+                logger.error("Scheduled discovery failed: %s", exc)
+            if _discovery_stop.wait(settings.discovery_interval_minutes * 60):
+                break
+
+    _discovery_thread = threading.Thread(target=_loop, daemon=True, name="discovery-scheduler")
+    _discovery_thread.start()
+    logger.info("Discovery scheduler started (every %s min)", settings.discovery_interval_minutes)
+
+
+class DiscoveryRoleRequest(_DiscoveryBaseModel):
+    role: Optional[str] = None
+
+
+@app.post("/api/v1/discover/runs", tags=["Discover"])
+async def trigger_discovery_run(req: DiscoveryRoleRequest, background_tasks: BackgroundTasks):
+    """Trigger a proactive discovery job in the background (real read-only queries)."""
+    settings = get_settings()
+    if not settings.discovery_enabled:
+        raise HTTPException(status_code=403, detail="Discovery is disabled")
+    role = req.role or settings.discovery_run_role
+    background_tasks.add_task(_run_discovery_and_track, "manual", role)
+    return {"status": "started", "message": "Proactive discovery job is running.", "role": role}
+
+
+@app.get("/api/v1/discover/runs/latest", tags=["Discover"])
+async def latest_discovery_run(db: Session = Depends(get_app_db)):
+    """Return the most recent discovery run status + progress."""
+    run = db.query(DiscoveryRun).order_by(DiscoveryRun.started_at.desc()).first()
+    if not run:
+        return {"status": "idle", "in_memory": _discovery_last_run, "run": None}
+    return {
+        "status": run.status,
+        "in_memory": _discovery_last_run,
+        "run": {
+            "id": run.id, "trigger": run.trigger, "role": run.role, "schema_name": run.schema_name,
+            "metrics_analyzed": run.metrics_analyzed, "dimensions_analyzed": run.dimensions_analyzed,
+            "findings_new": run.findings_new, "findings_deduped": run.findings_deduped,
+            "findings_total": run.findings_total, "duration_ms": run.duration_ms,
+            "error_message": run.error_message, "detail": run.detail,
+            "started_at": run.started_at.isoformat() if run.started_at else None,
+            "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+        },
+    }
+
+
+@app.get("/api/v1/discover/findings", tags=["Discover"])
+async def list_discovery_findings(
+    status: str = Query(default="active"),  # active | all | saved | dismissed
+    severity: Optional[str] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_app_db),
+):
+    """List ranked discovery findings. 'active' hides dismissed items."""
+    q = db.query(DiscoveryFinding)
+    if status == "active":
+        q = q.filter(DiscoveryFinding.status != "dismissed")
+    elif status in ("saved", "dismissed", "new"):
+        q = q.filter(DiscoveryFinding.status == status)
+    if severity:
+        q = q.filter(DiscoveryFinding.severity == severity)
+    items = q.order_by(DiscoveryFinding.score.desc(), DiscoveryFinding.created_at.desc()).limit(limit).all()
+    sev_order = {"critical": 0, "warning": 1, "watch": 2, "info": 3}
+    items = sorted(items, key=lambda f: (sev_order.get(f.severity, 9), -(f.score or 0)))
+    return {
+        "count": len(items),
+        "summary": {
+            "critical": sum(1 for f in items if f.severity == "critical"),
+            "warning": sum(1 for f in items if f.severity == "warning"),
+            "watch": sum(1 for f in items if f.severity == "watch"),
+            "info": sum(1 for f in items if f.severity == "info"),
+        },
+        "findings": [_serialize_finding(f) for f in items],
+    }
+
+
+@app.get("/api/v1/discover/findings/{finding_id}", tags=["Discover"])
+async def get_discovery_finding(finding_id: str, db: Session = Depends(get_app_db)):
+    f = db.query(DiscoveryFinding).filter(DiscoveryFinding.id == finding_id).first()
+    if not f:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    return _serialize_finding(f)
+
+
+@app.post("/api/v1/discover/findings/{finding_id}/dismiss", tags=["Discover"])
+async def dismiss_discovery_finding(finding_id: str, db: Session = Depends(get_app_db)):
+    f = db.query(DiscoveryFinding).filter(DiscoveryFinding.id == finding_id).first()
+    if not f:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    f.status = "dismissed"
+    db.commit()
+    _audit(db, "discovery.finding_dismissed", "discovery_finding", f.id, {"signature": f.signature})
+    return {"status": "dismissed", "id": f.id}
+
+
+@app.post("/api/v1/discover/findings/{finding_id}/save", tags=["Discover"])
+async def save_discovery_finding(finding_id: str, db: Session = Depends(get_app_db)):
+    f = db.query(DiscoveryFinding).filter(DiscoveryFinding.id == finding_id).first()
+    if not f:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    f.status = "saved"
+    db.commit()
+    return {"status": "saved", "id": f.id}
+
 
 # ============================================================================
 # QUERYPILOT CHAOS ARENA ENDPOINTS

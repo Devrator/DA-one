@@ -81,6 +81,9 @@ class QueryRecord(Base):
     assumptions = Column(JSON, nullable=True)
     query_plan = Column(JSON, nullable=True)
 
+    # Anti-hallucination evidence provenance (grounding + verification results)
+    evidence = Column(JSON, nullable=True)
+
     # Feedback
     feedback_rating = Column(Integer, nullable=True)  # 1-5
     feedback_comment = Column(Text, nullable=True)
@@ -203,4 +206,81 @@ class ConversationSession(Base):
     __table_args__ = (
         Index("idx_conversation_user", "user_id"),
         Index("idx_conversation_updated", "updated_at"),
+    )
+
+
+class DiscoveryRun(Base):
+    """A single proactive discovery job execution over the live target schema."""
+    __tablename__ = "discovery_runs"
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    status = Column(String(30), nullable=False, default="running")  # running, completed, failed
+    trigger = Column(String(30), nullable=False, default="manual")  # manual, scheduled
+    role = Column(String(50), nullable=False, default="executive")
+    schema_name = Column(String(200), nullable=True)
+    metrics_analyzed = Column(Integer, default=0)
+    dimensions_analyzed = Column(Integer, default=0)
+    findings_new = Column(Integer, default=0)
+    findings_deduped = Column(Integer, default=0)
+    findings_total = Column(Integer, default=0)
+    started_at = Column(DateTime(timezone=True), default=utcnow)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    duration_ms = Column(Float, nullable=True)
+    error_message = Column(Text, nullable=True)
+    detail = Column(JSON, nullable=True)  # introspected schema profile + detector diagnostics
+
+    findings = relationship("DiscoveryFinding", back_populates="run")
+
+    __table_args__ = (
+        Index("idx_discovery_run_status", "status"),
+        Index("idx_discovery_run_started", "started_at"),
+    )
+
+
+class DiscoveryFinding(Base):
+    """An evidence-backed proactive insight derived from real executed read-only queries."""
+    __tablename__ = "discovery_findings"
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    run_id = Column(String(36), ForeignKey("discovery_runs.id"), nullable=True)
+    signature = Column(String(64), nullable=False)  # stable hash for dedup across runs
+    severity = Column(String(20), nullable=False, default="info")  # info, watch, warning, critical
+    score = Column(Float, nullable=False, default=0.0)  # ranking strength
+    finding_type = Column(String(40), nullable=False)  # trend, anomaly, concentration, underperformer, opportunity
+    title = Column(String(300), nullable=False)
+    narrative = Column(Text, nullable=True)  # observed facts (what changed + by how much)
+    hypothesis = Column(Text, nullable=True)  # clearly separated 'why it might matter'
+    suggested_next_steps = Column(Text, nullable=True)
+
+    metric_name = Column(String(100), nullable=True)
+    dimension_name = Column(String(100), nullable=True)
+    segment = Column(String(200), nullable=True)
+    baseline_value = Column(Float, nullable=True)
+    current_value = Column(Float, nullable=True)
+    delta_abs = Column(Float, nullable=True)
+    delta_pct = Column(Float, nullable=True)
+    comparison_label = Column(String(200), nullable=True)  # e.g. 'Aug 2026 vs prior 8-mo mean'
+    period_label = Column(String(120), nullable=True)
+
+    source_tables = Column(JSON, default=list)
+    calculation = Column(JSON, default=dict)   # measure expr, filters, group-by
+    supporting_data = Column(JSON, default=list)  # rows for chart / drill-down
+    chart_spec = Column(JSON, default=dict)
+    assumptions = Column(JSON, default=list)
+    limitations = Column(JSON, default=list)
+    explore_question = Column(Text, nullable=True)  # prefill for chat 'Explore Further'
+
+    data_freshness_at = Column(DateTime(timezone=True), nullable=True)
+    role = Column(String(50), nullable=False, default="executive")
+
+    status = Column(String(20), nullable=False, default="new")  # new, dismissed, saved
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    run = relationship("DiscoveryRun", back_populates="findings")
+
+    __table_args__ = (
+        Index("idx_discovery_finding_sig", "signature"),
+        Index("idx_discovery_finding_status", "status"),
+        Index("idx_discovery_finding_created", "created_at"),
     )

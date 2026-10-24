@@ -2,6 +2,18 @@ import React, { useState, useEffect } from 'react';
 import { ShieldCheck, ShieldAlert, AlertTriangle, CheckCircle2, Lock, Play, Activity, RefreshCw, EyeOff, Search } from 'lucide-react';
 import PageHeader from './PageHeader';
 
+const OUTCOME_META = {
+  blocked_by_ast: { label: 'AST Policy Rejection', color: '#38bdf8' },
+  rls_filtered: { label: 'PostgreSQL RLS Filter', color: '#a78bfa' },
+  injection_defused: { label: 'Canary Defused', color: '#10b981' },
+  refused_by_model: { label: 'Refused by Model', color: '#fbbf24' },
+  error_rejection: { label: 'Safe Execution Error', color: '#94a3b8' },
+  safe_execution: { label: 'Safe Execution', color: '#10b981' },
+  data_leak: { label: 'Unauthorized Data Leak', color: '#ef4444' },
+  injection_leak: { label: 'Prompt Injection Leak', color: '#ef4444' },
+  policy_bypass: { label: 'Policy Bypass', color: '#ef4444' },
+};
+
 export default function SecurityEvaluationView() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -245,10 +257,10 @@ export default function SecurityEvaluationView() {
                 </td>
                 <td style={{ fontSize: '0.78rem' }}>
                   <span style={{
-                    color: c.outcome_type === 'blocked_by_ast' ? '#38bdf8' : c.outcome_type === 'rls_filtered' ? '#a78bfa' : '#10b981',
+                    color: OUTCOME_META[c.outcome_type]?.color ?? '#10b981',
                     fontWeight: 500
                   }}>
-                    {c.outcome_type === 'blocked_by_ast' ? 'AST Policy Rejection' : c.outcome_type === 'rls_filtered' ? 'PostgreSQL RLS Filter' : c.outcome_type === 'injection_defused' ? 'Canary Defused' : 'Safely Contained'}
+                    {OUTCOME_META[c.outcome_type]?.label ?? 'Safely Contained'}
                   </span>
                 </td>
                 <td>
@@ -258,9 +270,9 @@ export default function SecurityEvaluationView() {
                     gap: '4px',
                     fontSize: '0.75rem',
                     fontWeight: 600,
-                    color: '#10b981',
+                    color: c.passed ? '#10b981' : '#ef4444',
                   }}>
-                    <CheckCircle2 size={13} /> SAFE
+                    {c.passed ? (<><CheckCircle2 size={13} /> CONTAINED</>) : (<><ShieldAlert size={13} /> LEAKED</>)}
                   </span>
                 </td>
               </tr>

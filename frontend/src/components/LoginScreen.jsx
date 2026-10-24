@@ -54,10 +54,69 @@ export default function LoginScreen({ onLogin, initialRole = 'executive', theme 
     }
   };
 
+  const PARTICLES = Array.from({ length: 16 }, (_, i) => ({
+    id: i,
+    left: `${(i * 6.3 + 3) % 100}%`,
+    size: `${4 + (i % 4) * 2}px`,
+    delay: `${(i * 1.4) % 12}s`,
+    dur: `${13 + (i % 5) * 2.5}s`,
+    hue: ['teal', 'mint', 'copper'][i % 3],
+  }));
+
   return (
     <div className="da-login-screen">
+      {/* Project-themed animated scene: flowing brand ribbons + rising data particles */}
+      <div className="da-login-scene" aria-hidden="true">
+        <div className="da-login-ribbons">
+          <svg className="da-login-ribbon ribbon-1" viewBox="0 0 1440 320" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="ribTeal" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stopColor="#115e59" stopOpacity="0" />
+                <stop offset="35%" stopColor="#14b8a6" stopOpacity="0.55" />
+                <stop offset="70%" stopColor="#0b3b3c" stopOpacity="0.4" />
+                <stop offset="100%" stopColor="#2dd4bf" stopOpacity="0" />
+              </linearGradient>
+            </defs>
+            <path d="M0,160 C240,110 480,220 720,160 C960,100 1200,220 1440,150 L1440,214 C1200,284 960,164 720,224 C480,284 240,174 0,224 Z" fill="url(#ribTeal)" />
+            <path className="rib-flow" d="M0,187 C240,140 480,252 720,192 C960,132 1200,252 1440,182" />
+          </svg>
+          <svg className="da-login-ribbon ribbon-2" viewBox="0 0 1440 320" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="ribCopper" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stopColor="#c27847" stopOpacity="0" />
+                <stop offset="40%" stopColor="#e08343" stopOpacity="0.5" />
+                <stop offset="75%" stopColor="#8c4524" stopOpacity="0.35" />
+                <stop offset="100%" stopColor="#c27847" stopOpacity="0" />
+              </linearGradient>
+            </defs>
+            <path d="M0,170 C260,220 520,110 780,170 C1040,230 1240,120 1440,170 L1440,232 C1240,182 1040,292 780,232 C520,172 260,282 0,232 Z" fill="url(#ribCopper)" />
+            <path className="rib-flow" d="M0,201 C260,251 520,141 780,201 C1040,261 1240,151 1440,201" />
+          </svg>
+          <svg className="da-login-ribbon ribbon-3" viewBox="0 0 1440 320" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="ribMint" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stopColor="#2dd4bf" stopOpacity="0" />
+                <stop offset="50%" stopColor="#14b8a6" stopOpacity="0.45" />
+                <stop offset="100%" stopColor="#0d9488" stopOpacity="0" />
+              </linearGradient>
+            </defs>
+            <path d="M0,150 C300,210 600,110 900,170 C1100,210 1300,140 1440,175 L1440,225 C1300,190 1100,260 900,220 C600,160 300,260 0,200 Z" fill="url(#ribMint)" />
+            <path className="rib-flow" d="M0,175 C300,235 600,135 900,195 C1100,235 1300,165 1440,200" />
+          </svg>
+        </div>
+        <div className="da-login-particles">
+          {PARTICLES.map((p) => (
+            <span
+              key={p.id}
+              className={`da-login-particle p-${p.hue}`}
+              style={{ left: p.left, width: p.size, height: p.size, animationDelay: p.delay, animationDuration: p.dur }}
+            />
+          ))}
+        </div>
+      </div>
+
       {/* Centered Login Tile */}
-      <div className="da-login-card" style={{ position: 'relative' }}>
+      <div className="da-login-card" style={{ position: 'relative', zIndex: 1 }}>
         {/* Floating Theme Switcher */}
         {onToggleTheme && (
           <button
@@ -83,8 +142,8 @@ export default function LoginScreen({ onLogin, initialRole = 'executive', theme 
 
         {/* Top Brand & Emblem Header */}
         <div className="da-login-header">
-          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '8px' }}>
-            <DaOneLogo height={44} animated={true} />
+          <div className="da-login-emblem" style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
+            <DaOneLogo height={48} animated={true} />
           </div>
           <div className="da-login-badge">
             <span className="status-dot" />

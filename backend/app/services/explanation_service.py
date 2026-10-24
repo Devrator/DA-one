@@ -1,7 +1,10 @@
 """Explanation generation service.
 
 Creates grounded business explanations from actual query results.
-Never invents data — all explanations are traceable to executed query output.
+Never invents data — every numeric claim in an LLM-generated explanation is
+verified against the actual result set (EvidenceVerifier). If any claim cannot
+be traced to the data, the explanation is replaced with a deterministic
+template generated directly from the query output.
 """
 
 from __future__ import annotations
@@ -10,6 +13,7 @@ import logging
 from typing import Any, Optional
 
 from app.services.llm_provider import LLMProvider
+from app.services.validation_service import EvidenceVerifier
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +38,7 @@ class ExplanationService:
 
     def __init__(self, llm: LLMProvider):
         self.llm = llm
+        self.verifier = EvidenceVerifier()
 
     def generate_explanation(
         self,
@@ -42,7 +47,7 @@ class ExplanationService:
         columns: list[str],
         rows: list[dict[str, Any]],
         assumptions: list[str] | None = None,
-    ) -> str:
+    ) -> tuple[str, dict[str, Any]]:
         """Generate a business explanation grounded in actual results.
 
         Args:
@@ -53,10 +58,14 @@ class ExplanationService:
             assumptions: Any assumptions made during query generation.
 
         Returns:
-            A grounded explanation string.
+            (explanation, grounding_info) where grounding_info reports whether
+            the explanation passed numeric evidence verification.
         """
         if not rows:
-            return "No data matched the query criteria. The result set is empty, which may indicate that no records exist for the specified filters or time period."
+            return (
+                "No data matched the query criteria. The result set is empty, which may indicate that no records exist for the specified filters or time period.",
+                {"passed": True, "source": "deterministic", "unverified_claims": []},
+            )
 
         # Build a concise data summary for the LLM
         data_summary = self._summarize_results(columns, rows)
@@ -85,10 +94,27 @@ Query Results ({len(rows)} rows):
         )
 
         if response.success and response.content.strip():
-            return response.content.strip()
+            candidate = response.content.strip()
+            # Anti-hallucination gate: every number claimed must exist in the data
+            grounded, unverified = self.verifier.verify(candidate, columns, rows, sql)
+            if grounded:
+                return candidate, {"passed": True, "source": "llm_verified", "unverified_claims": []}
+            logger.warning(
+                "Explanation rejected — unverified numeric claims: %s | text: %s",
+                ", ".join(unverified), candidate[:120],
+            )
+            deterministic = self._fallback_explanation(question, columns, rows)
+            return deterministic, {
+                "passed": True,
+                "source": "deterministic_after_verification_failure",
+                "unverified_claims": unverified,
+                "rejected_llm_text": candidate[:300],
+            }
 
-        # Fallback: generate a basic explanation without the LLM
-        return self._fallback_explanation(question, columns, rows)
+        # LLM unavailable — generate a basic explanation without the LLM
+        return self._fallback_explanation(question, columns, rows), {
+            "passed": True, "source": "deterministic", "unverified_claims": [],
+        }
 
     def _summarize_results(
         self,

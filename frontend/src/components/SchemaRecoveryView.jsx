@@ -45,6 +45,9 @@ export default function SchemaRecoveryView() {
 
   const beforeResults = data?.before_results || [];
   const afterResults = data?.after_results || [];
+  const split = data?.split_schema || null;
+  const splitBefore = split?.before_results || [];
+  const splitAfter = split?.after_results || [];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', width: '100%', maxWidth: '1360px', margin: '0 auto' }}>
@@ -250,6 +253,75 @@ export default function SchemaRecoveryView() {
           );
         })}
       </div>
+
+      {/* Split-Schema Drift Recovery Section */}
+      {split && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{
+            background: 'var(--bg-surface)',
+            border: '1px solid rgba(168, 85, 247, 0.3)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '1rem 1.25rem',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+              <Database size={18} style={{ color: '#a855f7' }} />
+              <span style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-headings)' }}>
+                Split-Schema Drift Recovery (dimension table relocated to a new schema)
+              </span>
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px', lineHeight: 1.5 }}>
+              The product dimension was moved from <code>sales.product_catalog</code> to <code>{split.new_schema}.product_catalog</code> at runtime.
+              QueryPilot re-reflected <strong>all</strong> live user schemas
+              ({(split.schemas_discovered_after || []).join(', ')}) and re-answered the same questions with zero retraining,
+              then rolled the database back cleanly.
+            </div>
+            <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', fontSize: '12px', color: 'var(--text-secondary)' }}>
+              <span>Pre-split accuracy: <strong style={{ color: '#10b981' }}>{split.accuracy_before_migration_pct}%</strong></span>
+              <span>Post-split accuracy: <strong style={{ color: '#38bdf8' }}>{split.accuracy_after_migration_pct}%</strong></span>
+              <span>Autonomously re-anchored to new schema: <strong style={{ color: '#a855f7' }}>{split.adapted_cases_count} / {split.denominator}</strong></span>
+            </div>
+          </div>
+
+          {splitBefore.map((bCase, idx) => {
+            const aCase = splitAfter[idx] || {};
+            return (
+              <div
+                key={bCase.id}
+                style={{
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '14px 16px',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: '#94a3b8' }}>{bCase.id}</span>
+                    <span style={{ fontWeight: 600, color: 'var(--text-headings)', fontSize: '13px' }}>{bCase.question}</span>
+                  </div>
+                  <span style={{
+                    fontSize: '11px', padding: '2px 8px', borderRadius: '4px', fontWeight: 600,
+                    background: aCase.adapted_to_split_schema ? 'rgba(168, 85, 247, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                    color: aCase.adapted_to_split_schema ? '#c084fc' : '#f87171',
+                  }}>
+                    {aCase.adapted_to_split_schema ? `RE-ANCHORED TO ${String(split.new_schema).toUpperCase()}` : 'ADAPTATION FAILED'}
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div style={{ background: 'rgba(251, 249, 245, 0.9)', border: '1px solid var(--border-card)', borderRadius: '6px', padding: '10px' }}>
+                    <div style={{ fontSize: '10px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Before Split (sales schema)</div>
+                    <pre style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-primary)', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{bCase.sql}</pre>
+                  </div>
+                  <div style={{ background: 'rgba(168, 85, 247, 0.05)', border: '1px solid rgba(168, 85, 247, 0.2)', borderRadius: '6px', padding: '10px' }}>
+                    <div style={{ fontSize: '10px', fontWeight: 600, color: '#a855f7', textTransform: 'uppercase', marginBottom: '4px' }}>After Split (recovered live schema)</div>
+                    <pre style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: '#a855f7', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{aCase.sql}</pre>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

@@ -162,6 +162,13 @@ body {
   transition: background-color 0.25s ease, color 0.25s ease;
 }
 
+/* Stacking-context guard: #root owns the layer stack so the fixed smoky
+   background always paints BEHIND scrolling content (fixes Chromium
+   compositing bug where blurred fixed layers cover tall scrolled views) */
+#root {
+  isolation: isolate;
+}
+
 /* =============================================================================
    Smoky Floating Motion Background (Logo Color Palette: Teal, Mint & Copper)
    ============================================================================= */
@@ -171,7 +178,7 @@ body {
   width: 100vw;
   height: 100vh;
   pointer-events: none;
-  z-index: 0;
+  z-index: -1;
   overflow: hidden;
   background-color: var(--bg-canvas);
   transition: background-color 0.25s ease;
@@ -342,7 +349,7 @@ body {
   min-height: 100vh;
   width: 100%;
   position: relative;
-  z-index: 1;
+  z-index: auto;
   background: transparent;
 }
 
@@ -573,12 +580,19 @@ body {
   position: sticky;
   top: 0;
   z-index: 100;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: visible;
 }
 
 .da-top-left {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
 }
 
 .da-top-agent-badge {
@@ -590,6 +604,8 @@ body {
   color: var(--teal-primary);
   border: 1px solid rgba(20, 184, 166, 0.25);
   letter-spacing: 0.04em;
+  white-space: nowrap;
+  flex-shrink: 0;
   text-transform: uppercase;
   display: flex;
   align-items: center;
@@ -613,6 +629,8 @@ body {
   background: rgba(254, 250, 245, 0.95);
   border: 1px solid rgba(194, 120, 71, 0.28);
   box-shadow: 0 1px 4px rgba(194, 120, 71, 0.06);
+  white-space: nowrap;
+  flex-shrink: 0;
   font-size: 0.82rem;
   font-weight: 700;
   color: var(--text-headings);
@@ -623,6 +641,9 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: visible;
 }
 
 .da-top-status-chip {
@@ -634,6 +655,8 @@ body {
   background: rgba(251, 249, 245, 0.9);
   border: 1px solid var(--border-card);
   font-size: 0.72rem;
+  white-space: nowrap;
+  flex-shrink: 0;
   color: var(--text-secondary);
   font-weight: 500;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
@@ -692,6 +715,8 @@ body {
   background: rgba(251, 249, 245, 0.95);
   border: 1px solid var(--border-card);
   cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
   transition: all var(--transition-fast);
 }
 
@@ -1839,9 +1864,24 @@ body {
 .benchmark-grid,
 .metrics-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   width: 100%;
+  box-sizing: border-box;
+}
+
+@media (max-width: 1100px) {
+  .benchmark-grid,
+  .metrics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .benchmark-grid,
+  .metrics-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Stat Cards (Benchmark view) */
@@ -1896,6 +1936,7 @@ body {
   padding: 14px 16px;
   box-shadow: 0 4px 18px rgba(17, 94, 89, 0.08) !important;
   transition: all var(--transition-normal);
+  min-width: 0;
 }
 
 .metric-card:hover {
@@ -2110,7 +2151,8 @@ body {
   -webkit-backdrop-filter: blur(20px);
   border: 1.5px solid rgba(226, 220, 209, 0.95);
   border-radius: 14px;
-  overflow: hidden;
+  overflow-x: auto;
+  max-width: 100%;
   box-shadow: 0 4px 18px rgba(17, 94, 89, 0.06);
 }
 
@@ -2597,6 +2639,166 @@ body {
   font-size: 0.7rem;
   color: var(--text-secondary);
   font-weight: 500;
+}
+
+/* =============================================================================
+   Login Cinematic Scene — Floating Brand Ribbons + Rising Data Particles
+   (Ribbons echo the interwoven D-A emblem; particles evoke live data flowing in)
+   ============================================================================= */
+.da-login-scene {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.da-login-ribbons {
+  position: absolute;
+  inset: 0;
+}
+
+.da-login-ribbon {
+  position: absolute;
+  left: -20%;
+  width: 140%;
+  height: 260px;
+  filter: blur(2px);
+  opacity: 0.75;
+  will-change: transform;
+}
+
+.da-login-ribbon .rib-flow {
+  fill: none;
+  stroke: #2dd4bf;
+  stroke-opacity: 0.45;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 12 30;
+  animation: flowDash 5.5s linear infinite;
+}
+
+.da-login-ribbon.ribbon-1 { top: 8%; animation: ribbonDrift 22s ease-in-out infinite alternate; }
+.da-login-ribbon.ribbon-1 .rib-flow { stroke: #e08343; }
+.da-login-ribbon.ribbon-2 { bottom: 6%; animation: ribbonDrift 27s ease-in-out infinite alternate-reverse; }
+.da-login-ribbon.ribbon-2 .rib-flow { stroke: #f0b184; }
+.da-login-ribbon.ribbon-3 { top: 46%; opacity: 0.6; animation: ribbonDrift 31s ease-in-out infinite alternate; }
+
+@keyframes ribbonDrift {
+  0%   { transform: translate3d(-3%, 0, 0) skewY(-1deg) }
+  50%  { transform: translate3d(4%, -16px, 0) skewY(1deg) }
+  100% { transform: translate3d(-3%, 10px, 0) skewY(-1deg) }
+}
+
+@keyframes flowDash {
+  to { stroke-dashoffset: -420; }
+}
+
+/* Rising data particles */
+.da-login-particles {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.da-login-particle {
+  position: absolute;
+  bottom: -18px;
+  border-radius: 50%;
+  opacity: 0;
+  filter: blur(0.5px);
+  will-change: transform, opacity;
+  animation-name: particleRise;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+.da-login-particle.p-teal   { background: radial-gradient(circle, #14b8a6, transparent 70%); box-shadow: 0 0 10px rgba(20,184,166,0.65); }
+.da-login-particle.p-mint   { background: radial-gradient(circle, #2dd4bf, transparent 70%); box-shadow: 0 0 10px rgba(45,212,191,0.55); }
+.da-login-particle.p-copper { background: radial-gradient(circle, #e08343, transparent 70%); box-shadow: 0 0 10px rgba(224,131,67,0.5); }
+
+@keyframes particleRise {
+  0%   { transform: translateY(0) scale(0.6);    opacity: 0; }
+  12%  { opacity: 0.85; }
+  85%  { opacity: 0.35; }
+  100% { transform: translateY(-104vh) scale(1.05); opacity: 0; }
+}
+
+/* Emblem halo glow + gentle float */
+.da-login-emblem { position: relative; animation: emblemFloat 5.5s ease-in-out infinite; }
+.da-login-emblem::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 150px;
+  height: 150px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, rgba(20,184,166,0), rgba(20,184,166,0.4), rgba(194,120,71,0.4), rgba(45,212,191,0.35), rgba(20,184,166,0));
+  filter: blur(18px);
+  opacity: 0.65;
+  z-index: -1;
+  animation: spinGlow 9s linear infinite;
+}
+@keyframes spinGlow { to { transform: translate(-50%, -50%) rotate(360deg); } }
+@keyframes emblemFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+
+/* Richer card entrance + pulsing outer glow */
+.da-login-card { animation: loginCardIn 0.7s cubic-bezier(0.22, 1, 0.36, 1) both, cardGlow 6.5s ease-in-out 0.7s infinite; }
+@keyframes loginCardIn {
+  0%   { opacity: 0; transform: translateY(20px) scale(0.97); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes cardGlow {
+  0%, 100% { box-shadow: 0 18px 45px rgba(17, 94, 89, 0.16), 0 0 34px rgba(20, 184, 166, 0.16); }
+  50%      { box-shadow: 0 22px 55px rgba(17, 94, 89, 0.22), 0 0 52px rgba(194, 120, 71, 0.22); }
+}
+
+/* CTA shimmer sweep */
+.da-btn-login { position: relative; overflow: hidden; }
+.da-btn-login::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -60%;
+  width: 40%;
+  height: 100%;
+  background: linear-gradient(120deg, transparent, rgba(255,255,255,0.5), transparent);
+  transform: skewX(-20deg);
+  animation: btnSheen 3.4s ease-in-out infinite;
+}
+@keyframes btnSheen {
+  0%   { left: -60%; }
+  55%  { left: 130%; }
+  100% { left: 130%; }
+}
+
+/* Role tile micro-interactions */
+.da-login-role-tile { transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1); }
+.da-login-role-tile:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(17, 94, 89, 0.1); }
+.da-login-role-tile.active { transform: translateY(-1px); }
+
+/* Dark-theme polish for fixed-color login surfaces */
+[data-theme="dark"] .da-login-card {
+  background: rgba(15, 25, 32, 0.72);
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+[data-theme="dark"] .da-login-input { background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.12); color: #e2e8f0; }
+[data-theme="dark"] .da-login-input:focus { background: rgba(255, 255, 255, 0.08); }
+[data-theme="dark"] .da-login-role-tile { background: rgba(255, 255, 255, 0.04); border-color: rgba(255, 255, 255, 0.08); }
+[data-theme="dark"] .da-login-role-tile:hover { background: rgba(255, 255, 255, 0.07); border-color: var(--teal-light); }
+[data-theme="dark"] .da-login-role-tile.active { background: rgba(20, 184, 166, 0.12); border-color: rgba(45, 212, 191, 0.4); }
+[data-theme="dark"] .da-login-ribbon { opacity: 0.9; }
+
+/* Accessibility: honor reduced-motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .da-login-scene, .da-login-ribbon, .da-login-ribbon .rib-flow,
+  .da-login-particle, .da-login-emblem, .da-login-emblem::before,
+  .da-login-card, .da-btn-login::after {
+    animation: none !important;
+  }
+  .da-login-particle { display: none; }
 }
 
 /* =============================================================================

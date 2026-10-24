@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, ShieldAlert, User, ChevronDown, Check, Info } from 'lucide-react';
+import { Shield, User, Check } from 'lucide-react';
 
 export default function RoleSelector({ currentRole, onRoleChange }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [matrixModalOpen, setMatrixModalOpen] = useState(false);
   const [rolesData, setRolesData] = useState(null);
 
   useEffect(() => {
@@ -21,8 +19,6 @@ export default function RoleSelector({ currentRole, onRoleChange }) {
     { username: 'sales_rep_david', role: 'sales_rep', description: 'Sales Rep (David Kim) — Orders scoped to David Kim; Targets & Cost restricted' },
   ];
 
-  const activePersona = personas.find(p => p.username === currentRole) || personas[0];
-
   const getRoleBadgeStyle = (role) => {
     switch (role) {
       case 'executive':
@@ -37,125 +33,67 @@ export default function RoleSelector({ currentRole, onRoleChange }) {
   };
 
   return (
-    <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '8px' }}>
-      {/* Active Persona Trigger */}
-      <div 
-        onClick={() => setIsOpen(!isOpen)}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          padding: '6px 12px',
-          borderRadius: '10px',
-          background: 'var(--bg-surface)',
-          border: '1px solid var(--border-card)',
-          cursor: 'pointer',
-          userSelect: 'none',
-          transition: 'all 0.2s ease',
-        }}
-      >
-        <div style={{
-          width: '24px',
-          height: '24px',
-          borderRadius: '6px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          ...getRoleBadgeStyle(activePersona.role)
-        }}>
-          <User size={13} />
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{ fontSize: '10px', color: '#8090a7', textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>
-            Security Persona
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
+      {/* ============================================================
+          Section 1: Verified identity switcher (rendered inline so the
+          modal's own scroll handles overflow — no clipped dropdown)
+          ============================================================ */}
+      <section>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
+          <div style={{
+            width: '30px', height: '30px', borderRadius: '8px',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(17, 94, 89, 0.1)', border: '1px solid rgba(17, 94, 89, 0.25)',
+          }}>
+            <User size={15} style={{ color: '#115e59' }} />
           </div>
-          <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-headings)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-            {activePersona.username}
-            <ChevronDown size={12} color="#8090a7" />
-          </div>
-        </div>
-      </div>
-
-      {/* Permissions Matrix Button */}
-      <button
-        onClick={() => setMatrixModalOpen(true)}
-        title="View 3-Role Permission Matrix"
-        style={{
-          padding: '6px 12px',
-          borderRadius: '10px',
-          background: 'var(--bg-surface)',
-          border: '1px solid var(--border-card)',
-          color: 'var(--text-secondary)',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '5px',
-          fontSize: '12px',
-          fontWeight: 600,
-        }}
-      >
-        <Shield size={13} style={{ color: 'var(--teal-primary)' }} />
-        <span>Matrix</span>
-      </button>
-
-      {/* Dropdown Menu */}
-      {isOpen && (
-        <div 
-          style={{
-            position: 'absolute',
-            top: '110%',
-            right: 0,
-            width: '340px',
-            background: 'var(--bg-surface)',
-            border: '1px solid var(--border-card)',
-            borderRadius: '12px',
-            boxShadow: 'var(--shadow-lg)',
-            zIndex: 9999,
-            padding: '8px',
-          }}
-        >
-          <div style={{ padding: '8px 10px', borderBottom: '1px solid #f1ece4', marginBottom: '6px' }}>
-            <div style={{ fontSize: '11px', color: '#115e59', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+          <div>
+            <div style={{ fontSize: '12px', color: '#115e59', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
               Switch Verified Identity (Server-Enforced)
             </div>
             <div style={{ fontSize: '11px', color: '#8090a7' }}>
               Permissions and PostgreSQL RLS resolve server-side.
             </div>
           </div>
+        </div>
+
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
+          gap: '8px',
+          marginTop: '12px',
+        }}>
           {personas.map((p) => {
             const isSelected = p.username === currentRole;
             return (
               <div
                 key={p.username}
-                onClick={() => {
-                  onRoleChange(p.username);
-                  setIsOpen(false);
-                }}
+                onClick={() => onRoleChange(p.username)}
                 style={{
-                  padding: '9px 12px',
-                  borderRadius: '8px',
+                  padding: '10px 12px',
+                  borderRadius: '10px',
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'flex-start',
                   gap: '8px',
-                  background: isSelected ? 'rgba(17, 94, 89, 0.08)' : 'transparent',
-                  border: isSelected ? '1px solid rgba(17, 94, 89, 0.25)' : '1px solid transparent',
-                  marginBottom: '3px',
-                  transition: 'background 0.15s ease',
+                  background: isSelected ? 'rgba(17, 94, 89, 0.08)' : 'var(--bg-surface)',
+                  border: isSelected ? '1px solid rgba(17, 94, 89, 0.35)' : '1px solid var(--border-card)',
+                  transition: 'all 0.15s ease',
                 }}
               >
                 <div style={{
                   padding: '2px 6px',
-                  borderRadius: '4px',
-                  fontSize: '10px',
-                  fontWeight: 600,
+                  borderRadius: '5px',
+                  fontSize: '9px',
+                  fontWeight: 700,
                   textTransform: 'uppercase',
+                  whiteSpace: 'nowrap',
                   marginTop: '2px',
-                  ...getRoleBadgeStyle(p.role)
+                  ...getRoleBadgeStyle(p.role),
                 }}>
                   {p.role.replace('_', ' ')}
                 </div>
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-headings)' }}>
                     {p.username}
                   </div>
@@ -163,109 +101,72 @@ export default function RoleSelector({ currentRole, onRoleChange }) {
                     {p.description}
                   </div>
                 </div>
-                {isSelected && <Check size={14} color="#115e59" style={{ marginTop: '4px' }} />}
+                {isSelected && <Check size={15} color="#115e59" style={{ marginTop: '3px', flexShrink: 0 }} />}
               </div>
             );
           })}
         </div>
-      )}
+      </section>
 
-      {/* Permission Matrix Modal */}
-      {matrixModalOpen && (
-        <div style={{
-          position: 'fixed',
-          top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0, 0, 0, 0.8)',
-          backdropFilter: 'blur(4px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 10000,
-        }}>
-          <div style={{
-            background: 'var(--bg-surface)',
-            border: '1.5px solid var(--border-card)',
-            borderRadius: '14px',
-            width: '720px',
-            maxHeight: '85vh',
-            overflowY: 'auto',
-            padding: '24px',
-            color: 'var(--text-primary)',
-            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)',
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Shield size={20} color="#38bdf8" />
-                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700 }}>Phase 2 Role Security Matrix</h3>
-              </div>
-              <button 
-                onClick={() => setMatrixModalOpen(false)}
-                style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '18px' }}
-              >
-                &times;
-              </button>
-            </div>
-
-            <div style={{ fontSize: '13px', color: '#94a3b8', marginBottom: '20px' }}>
-              Identities are verified strictly on the server. Permissions are enforced at the database level using PostgreSQL Row-Level Security (RLS) on <code style={{ color: '#38bdf8' }}>sales.sales_orders</code>, <code style={{ color: '#38bdf8' }}>sales.customers</code>, and <code style={{ color: '#38bdf8' }}>sales.regional_targets</code> with AST column pruning and dedicated read-only credentials.
-            </div>
-
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-              <thead>
-                <tr style={{ background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border-card)' }}>
-                  <th style={{ padding: '10px', textAlign: 'left' }}>Role</th>
-                  <th style={{ padding: '10px', textAlign: 'left' }}>PostgreSQL RLS Scope</th>
-                  <th style={{ padding: '10px', textAlign: 'left' }}>Restricted Columns</th>
-                  <th style={{ padding: '10px', textAlign: 'left' }}>Prohibited Tables</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                  <td style={{ padding: '10px', fontWeight: 600, color: '#38bdf8' }}>Executive (Admin)</td>
-                  <td style={{ padding: '10px', color: 'var(--text-secondary)' }}>Unrestricted organization-wide access</td>
-                  <td style={{ padding: '10px', color: '#10b981' }}>None (Full visibility)</td>
-                  <td style={{ padding: '10px', color: '#10b981' }}>None</td>
-                </tr>
-                <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                  <td style={{ padding: '10px', fontWeight: 600, color: '#fbbf24' }}>Regional Manager</td>
-                  <td style={{ padding: '10px', color: 'var(--text-secondary)' }}>Restricted to assigned region (<code style={{ color: '#fbbf24' }}>region_id</code>)</td>
-                  <td style={{ padding: '10px', color: '#f87171' }}>
-                    customers.phone, customers.email, product_catalog.cost_price
-                  </td>
-                  <td style={{ padding: '10px', color: '#10b981' }}>None</td>
-                </tr>
-                <tr>
-                  <td style={{ padding: '10px', fontWeight: 600, color: '#a78bfa' }}>Sales Representative</td>
-                  <td style={{ padding: '10px', color: 'var(--text-secondary)' }}>Restricted to own orders (<code style={{ color: '#a78bfa' }}>sales_rep</code>)</td>
-                  <td style={{ padding: '10px', color: '#f87171' }}>
-                    cost_price, phone, email, regional_targets.revenue_target, regions.manager_name
-                  </td>
-                  <td style={{ padding: '10px', color: '#f87171' }}>
-                    sales.regional_targets
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-
-            <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'flex-end' }}>
-              <button
-                onClick={() => setMatrixModalOpen(false)}
-                style={{
-                  padding: '8px 16px',
-                  borderRadius: '6px',
-                  background: '#38bdf8',
-                  color: '#0f172a',
-                  fontWeight: 600,
-                  border: 'none',
-                  cursor: 'pointer',
-                }}
-              >
-                Close Matrix
-              </button>
-            </div>
-          </div>
+      {/* ============================================================
+          Section 2: Phase 2 role security matrix (inline table, was
+          previously a nested modal)
+          ============================================================ */}
+      <section>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+          <Shield size={18} style={{ color: 'var(--teal-primary)' }} />
+          <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 700, color: 'var(--text-headings)' }}>
+            Phase 2 Role Security Matrix
+          </h3>
         </div>
-      )}
+
+        <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '14px', lineHeight: 1.5 }}>
+          Identities are verified strictly on the server. Permissions are enforced at the database level using
+          PostgreSQL Row-Level Security (RLS) on <code style={{ color: '#0d9488' }}>sales.sales_orders</code>,{' '}
+          <code style={{ color: '#0d9488' }}>sales.customers</code>, and{' '}
+          <code style={{ color: '#0d9488' }}>sales.regional_targets</code> with AST column pruning and dedicated
+          read-only credentials.
+        </div>
+
+        <div style={{ overflowX: 'auto', borderRadius: '10px', border: '1px solid var(--border-card)' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', minWidth: '560px' }}>
+            <thead>
+              <tr style={{ background: 'var(--bg-secondary)' }}>
+                <th style={{ padding: '10px', textAlign: 'left', color: 'var(--text-headings)', borderBottom: '1px solid var(--border-card)' }}>Role</th>
+                <th style={{ padding: '10px', textAlign: 'left', color: 'var(--text-headings)', borderBottom: '1px solid var(--border-card)' }}>PostgreSQL RLS Scope</th>
+                <th style={{ padding: '10px', textAlign: 'left', color: 'var(--text-headings)', borderBottom: '1px solid var(--border-card)' }}>Restricted Columns</th>
+                <th style={{ padding: '10px', textAlign: 'left', color: 'var(--text-headings)', borderBottom: '1px solid var(--border-card)' }}>Prohibited Tables</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                <td style={{ padding: '10px', fontWeight: 600, color: '#115e59' }}>Executive (Admin)</td>
+                <td style={{ padding: '10px', color: 'var(--text-secondary)' }}>Unrestricted organization-wide access</td>
+                <td style={{ padding: '10px', color: '#10b981' }}>None (Full visibility)</td>
+                <td style={{ padding: '10px', color: '#10b981' }}>None</td>
+              </tr>
+              <tr style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                <td style={{ padding: '10px', fontWeight: 600, color: '#c27847' }}>Regional Manager</td>
+                <td style={{ padding: '10px', color: 'var(--text-secondary)' }}>Restricted to assigned region (<code style={{ color: '#c27847' }}>region_id</code>)</td>
+                <td style={{ padding: '10px', color: '#b91c1c' }}>
+                  customers.phone, customers.email, product_catalog.cost_price
+                </td>
+                <td style={{ padding: '10px', color: '#10b981' }}>None</td>
+              </tr>
+              <tr>
+                <td style={{ padding: '10px', fontWeight: 600, color: '#7c3aed' }}>Sales Representative</td>
+                <td style={{ padding: '10px', color: 'var(--text-secondary)' }}>Restricted to own orders (<code style={{ color: '#7c3aed' }}>sales_rep</code>)</td>
+                <td style={{ padding: '10px', color: '#b91c1c' }}>
+                  cost_price, phone, email, regional_targets.revenue_target, regions.manager_name
+                </td>
+                <td style={{ padding: '10px', color: '#b91c1c' }}>
+                  sales.regional_targets
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 }

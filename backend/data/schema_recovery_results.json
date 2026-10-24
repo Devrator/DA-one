@@ -1,77 +1,144 @@
 {
   "total_cases": 4,
   "accuracy_before_migration_pct": 100.0,
-  "accuracy_after_migration_pct": 100.0,
-  "recovered_cases_count": 4,
-  "remaining_failures": 0,
+  "accuracy_after_migration_pct": 50.0,
+  "recovered_cases_count": 2,
+  "remaining_failures": 2,
   "denominator": 4,
   "migration_actions": [
-    "ALTER TABLE sales.product_catalog RENAME TO products;",
-    "ALTER TABLE sales.sales_orders RENAME COLUMN discount_pct TO discount_rate;",
-    "Zero-Retraining Cache Invalidation & Dynamic Reflection Active"
+    "ALTER TABLE sales.product_catalog RENAME TO products",
+    "ALTER TABLE sales.sales_orders RENAME COLUMN discount_pct TO discount_rate",
+    "Automatic Schema Cache Invalidation & Reflection"
   ],
   "before_results": [
     {
       "id": "SR-01",
       "question": "What is the total sales amount by product category?",
-      "sql": "SELECT p.category, SUM(i.quantity * i.unit_price * (1 - i.discount_pct / 100)) AS total_sales FROM sales.product_catalog p JOIN sales.sales_order_items i ON p.product_id = i.product_id GROUP BY p.category ORDER BY total_sales DESC LIMIT 5",
+      "sql": "SELECT pc.category, SUM(soi.quantity * soi.unit_price * (1 - COALESCE(soi.discount_pct, 0) / 100)) AS total_sales FROM sales.sales_order_items soi JOIN sales.product_catalog pc ON soi.product_id = pc.product_id GROUP BY pc.category ORDER BY total_sales DESC LIMIT 5",
       "passed": true,
-      "latency_ms": 284.2
+      "latency_ms": 34437.1
     },
     {
       "id": "SR-02",
       "question": "List top 5 products by total revenue",
-      "sql": "SELECT pc.product_name, SUM(soi.quantity * soi.unit_price * (1 - soi.discount_pct / 100)) AS total_revenue FROM sales.sales_order_items soi JOIN sales.product_catalog pc ON soi.product_id = pc.product_id GROUP BY pc.product_name ORDER BY total_revenue DESC LIMIT 5",
+      "sql": "SELECT pc.product_name, SUM(soi.quantity * soi.unit_price * (1 - COALESCE(soi.discount_pct, 0) / 100)) AS total_revenue FROM sales.sales_order_items soi JOIN sales.product_catalog pc ON soi.product_id = pc.product_id GROUP BY pc.product_name ORDER BY total_revenue DESC LIMIT 5",
       "passed": true,
-      "latency_ms": 275.6
+      "latency_ms": 28672.6
     },
     {
       "id": "SR-03",
       "question": "What is the average discount percentage given for each customer segment?",
-      "sql": "SELECT c.segment, AVG(i.discount_pct) AS avg_discount_pct FROM sales.customers c JOIN sales.sales_orders o ON c.customer_id = o.customer_id JOIN sales.sales_order_items i ON o.order_id = i.order_id GROUP BY c.segment ORDER BY avg_discount_pct DESC LIMIT 5",
+      "sql": "SELECT c.segment, AVG(si.discount_pct) AS avg_discount_pct FROM sales.customers c JOIN sales.sales_orders o ON c.customer_id = o.customer_id JOIN sales.sales_order_items si ON o.order_id = si.order_id GROUP BY c.segment ORDER BY avg_discount_pct DESC LIMIT 5",
       "passed": true,
-      "latency_ms": 312.4
+      "latency_ms": 27542.8
     },
     {
       "id": "SR-04",
       "question": "Show all products in the Electronics category with their unit price",
-      "sql": "SELECT product_name, unit_price FROM sales.product_catalog WHERE category = 'Electronics' ORDER BY unit_price DESC LIMIT 10",
+      "sql": "SELECT product_name, unit_price FROM sales.product_catalog WHERE category = 'Electronics' LIMIT 5",
       "passed": true,
-      "latency_ms": 195.1
+      "latency_ms": 15797.1
     }
   ],
   "after_results": [
     {
       "id": "SR-01",
       "question": "What is the total sales amount by product category?",
-      "sql": "SELECT p.category, SUM(i.quantity * i.unit_price * (1 - i.discount_rate / 100)) AS total_sales FROM sales.sales_order_items i JOIN sales.products p ON i.product_id = p.product_id GROUP BY p.category ORDER BY total_sales DESC LIMIT 5",
-      "passed": true,
+      "sql": "SELECT p.category, SUM(i.quantity * i.unit_price * (1 - COALESCE(i.discount_rate, 0) / 100)) AS total_sales FROM sales.sales_order_items i JOIN sales.products p ON i.product_id = p.product_id GROUP BY p.category ORDER BY total_sales DESC LIMIT 5",
+      "passed": false,
       "adapted_to_new_schema": true,
-      "latency_ms": 298.4
+      "latency_ms": 31332.0
     },
     {
       "id": "SR-02",
       "question": "List top 5 products by total revenue",
       "sql": "SELECT p.product_name, SUM(oi.quantity * oi.unit_price * (1 - oi.discount_rate / 100)) AS total_revenue FROM sales.sales_order_items oi JOIN sales.products p ON oi.product_id = p.product_id GROUP BY p.product_name ORDER BY total_revenue DESC LIMIT 5",
-      "passed": true,
+      "passed": false,
       "adapted_to_new_schema": true,
-      "latency_ms": 282.9
+      "latency_ms": 26771.4
     },
     {
       "id": "SR-03",
       "question": "What is the average discount percentage given for each customer segment?",
-      "sql": "SELECT c.segment, ROUND(AVG(i.discount_rate), 2) AS avg_discount FROM sales.customers c JOIN sales.sales_orders o ON c.customer_id = o.customer_id JOIN sales.sales_order_items i ON o.order_id = i.order_id GROUP BY c.segment ORDER BY avg_discount DESC LIMIT 5",
+      "sql": "SELECT c.segment, AVG(si.discount_rate) AS avg_discount_rate FROM sales.customers c JOIN sales.sales_orders o ON c.customer_id = o.customer_id JOIN sales.sales_order_items si ON o.order_id = si.order_id GROUP BY c.segment ORDER BY avg_discount_rate DESC LIMIT 5",
       "passed": true,
       "adapted_to_new_schema": true,
-      "latency_ms": 324.7
+      "latency_ms": 27815.9
     },
     {
       "id": "SR-04",
       "question": "Show all products in the Electronics category with their unit price",
-      "sql": "SELECT product_name, unit_price FROM sales.products WHERE category = 'Electronics' ORDER BY unit_price DESC LIMIT 10",
+      "sql": "SELECT product_name, unit_price FROM sales.products WHERE category = 'Electronics' LIMIT 5",
       "passed": true,
       "adapted_to_new_schema": true,
-      "latency_ms": 208.5
+      "latency_ms": 14636.2
     }
-  ]
+  ],
+  "split_schema": {
+    "total_cases": 3,
+    "accuracy_before_migration_pct": 100.0,
+    "accuracy_after_migration_pct": 66.7,
+    "adapted_cases_count": 2,
+    "denominator": 3,
+    "new_schema": "warehouse",
+    "schemas_discovered_after": [
+      "chaos_test",
+      "sales",
+      "warehouse"
+    ],
+    "migration_actions": [
+      "CREATE SCHEMA warehouse;",
+      "ALTER TABLE sales.product_catalog SET SCHEMA warehouse;",
+      "Multi-schema cache invalidation & live re-reflection (zero retraining)"
+    ],
+    "before_results": [
+      {
+        "id": "SS-01",
+        "question": "What is the total sales amount by product category?",
+        "sql": "SELECT pc.category, SUM(soi.quantity * soi.unit_price * (1 - soi.discount_pct / 100)) AS total_sales FROM sales.sales_order_items soi JOIN sales.product_catalog pc ON soi.product_id = pc.product_id GROUP BY pc.category ORDER BY total_sales DESC LIMIT 5",
+        "passed": true,
+        "latency_ms": 24599.9
+      },
+      {
+        "id": "SS-02",
+        "question": "List the top 5 products by total revenue",
+        "sql": "SELECT pc.product_name, SUM(soi.quantity * soi.unit_price * (1 - soi.discount_pct / 100)) AS total_revenue FROM sales.sales_order_items soi JOIN sales.product_catalog pc ON soi.product_id = pc.product_id GROUP BY pc.product_name ORDER BY total_revenue DESC LIMIT 5",
+        "passed": true,
+        "latency_ms": 27659.4
+      },
+      {
+        "id": "SS-03",
+        "question": "Show all products in the Electronics category with their unit price",
+        "sql": "SELECT product_name, unit_price FROM sales.product_catalog WHERE category = 'Electronics' LIMIT 1000",
+        "passed": true,
+        "latency_ms": 14588.5
+      }
+    ],
+    "after_results": [
+      {
+        "id": "SS-01",
+        "question": "What is the total sales amount by product category?",
+        "sql": "SELECT pc.category, SUM(soi.quantity * soi.unit_price * (1 - soi.discount_pct / 100)) AS total_sales FROM sales.sales_order_items soi JOIN warehouse.product_catalog pc ON soi.product_id = pc.product_id GROUP BY pc.category ORDER BY total_sales DESC LIMIT 5",
+        "passed": true,
+        "latency_ms": 30149.4,
+        "adapted_to_split_schema": true
+      },
+      {
+        "id": "SS-02",
+        "question": "List the top 5 products by total revenue",
+        "sql": "SELECT pc.product_name, SUM(soi.quantity * soi.unit_price * (1 - soi.discount_pct / 100)) AS total_revenue FROM sales.sales_order_items soi JOIN warehouse.product_catalog pc ON soi.product_id = pc.product_id GROUP BY pc.product_name ORDER BY total_revenue DESC LIMIT 5",
+        "passed": true,
+        "latency_ms": 26489.2,
+        "adapted_to_split_schema": true
+      },
+      {
+        "id": "SS-03",
+        "question": "Show all products in the Electronics category with their unit price",
+        "sql": "SELECT product_name, unit_price FROM sales.product_catalog WHERE category = 'Electronics' LIMIT 1000",
+        "passed": false,
+        "latency_ms": 15858.9,
+        "adapted_to_split_schema": false
+      }
+    ]
+  }
 }

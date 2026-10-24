@@ -23,9 +23,11 @@ import DaOneLogo from './components/DaOneLogo';
 import LoginScreen from './components/LoginScreen';
 import ReportsView from './components/ReportsView';
 import SettingsView from './components/SettingsView';
+import DiscoverView from './components/DiscoverView';
 
 const PAGE_TITLES = {
   workspace: 'Analytics Workspace',
+  discover: 'Discover & Early Warnings',
   schema: 'Schema Catalog',
   benchmark: 'Benchmark (31 Cases)',
   security: 'Security Audit (35 Attacks)',
@@ -37,13 +39,6 @@ const PAGE_TITLES = {
   settings: 'System & Security Settings',
 };
 
-const MOCK_NOTIFICATIONS = [
-  { id: 1, title: 'Benchmark Verified', message: 'Full 31/31 suite passed with 100% AST safety score.', time: '5m ago' },
-  { id: 2, title: 'PostgreSQL Target DB', message: '7 target tables detected and cached for fast execution.', time: '12m ago' },
-  { id: 3, title: 'Chaos Sandbox Isolated', message: 'Schema chaos_test recloned cleanly without affecting sales.', time: '25m ago' },
-  { id: 4, title: 'RBAC Policy Enforced', message: 'Current session scoped to executive persona.', time: '1h ago' },
-];
-
 const SAMPLE_PROMPTS = [
   "Show total sales by region",
   "Who are the top 5 customers by number of orders?",
@@ -53,14 +48,17 @@ const SAMPLE_PROMPTS = [
   "Show monthly order volume trend for 2024"
 ];
 
-// Default Reference Regional Breakdown (from verified PostgreSQL sales target database)
-const DEFAULT_REGIONAL_STATS = [
-  { rank: 1, region: 'South', sales: 1249027.42, salesFormatted: '$1,249,027.42', orders: '4,231', avgOrder: '$295.41', customers: '1,402', pct: 34.3, color: '#115e59', heightPct: 100 },
-  { rank: 2, region: 'West', sales: 722089.59, salesFormatted: '$722,089.59', orders: '2,546', avgOrder: '$283.65', customers: '892', pct: 19.8, color: '#14b8a6', heightPct: 58 },
-  { rank: 3, region: 'Central', sales: 674225.17, salesFormatted: '$674,225.17', orders: '2,318', avgOrder: '$290.81', customers: '767', pct: 18.5, color: '#2dd4bf', heightPct: 54 },
-  { rank: 4, region: 'North', sales: 611925.26, salesFormatted: '$611,925.26', orders: '2,104', avgOrder: '$290.83', customers: '698', pct: 16.8, color: '#e08343', heightPct: 49 },
-  { rank: 5, region: 'East', sales: 485213.48, salesFormatted: '$485,213.48', orders: '1,383', avgOrder: '$350.76', customers: '527', pct: 13.3, color: '#c27847', heightPct: 39 },
-];
+// Palette assigned positionally to regions returned live from the target DB.
+const REGION_COLORS = ['#115e59', '#14b8a6', '#2dd4bf', '#e08343', '#c27847', '#0f766e', '#0d9488'];
+
+const fmtMoney = (n) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtInt = (n) => Number(n || 0).toLocaleString('en-US');
+const fmtCompact = (n) => {
+  const v = Number(n || 0);
+  if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+  if (v >= 1e3) return (v / 1e3).toFixed(1) + 'K';
+  return v.toFixed(0);
+};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('workspace');
@@ -74,6 +72,7 @@ export default function App() {
   const [schemaTables, setSchemaTables] = useState([]);
   const [systemReadiness, setSystemReadiness] = useState(null);
   const [queryHistory, setQueryHistory] = useState([]);
+  const [stats, setStats] = useState(null);
   const [schemaSearch, setSchemaSearch] = useState('');
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -93,12 +92,7 @@ export default function App() {
   }, [theme]);
   
   // Interactive notifications state
-  const [notifications, setNotifications] = useState([
-    { id: 1, title: 'SQL AST Guardrails', message: '35/35 adversarial security attacks blocked (100% defense rate).', time: '2m ago', unread: true, tag: 'Security' },
-    { id: 2, title: 'PostgreSQL Target Active', message: 'Connected on port 5433 with read-only target role enforcement.', time: '10m ago', unread: true, tag: 'Database' },
-    { id: 3, title: 'Ollama Engine Online', message: 'qwen2.5-coder:7b online with 30s statement timeout and bounded repair.', time: '25m ago', unread: false, tag: 'LLM' },
-    { id: 4, title: 'Benchmark Verified', message: '31 golden test cases ready for semantic accuracy evaluation.', time: '1h ago', unread: false, tag: 'Benchmark' },
-  ]);
+  const [notifications, setNotifications] = useState([]);
   const unreadNotifCount = notifications.filter(n => n.unread).length;
 
   const handleMarkAllRead = () => {
@@ -133,12 +127,31 @@ export default function App() {
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, []);
 
-  // Load readiness & schema on mount
+  // Load readiness, schema, recent queries & live stats on mount
   useEffect(() => {
     checkReadiness();
     fetchSchema();
     fetchRecentQueries();
+    fetchStats();
   }, []);
+
+  // Derive notifications from real system state (no fabricated alerts)
+  useEffect(() => {
+    const items = [];
+    if (stats) {
+      items.push({ id: 'stats', title: 'Live Analytics Synced', message: `Real-time aggregates computed from PostgreSQL: ${fmtMoney(stats.totals.total_sales)} across ${fmtInt(stats.totals.total_orders)} orders, ${fmtInt(stats.totals.total_customers)} customers, ${fmtInt(stats.totals.total_products)} products.`, time: 'just now', unread: true, tag: 'Database' });
+    }
+    if (systemReadiness?.database?.status === 'healthy') {
+      items.push({ id: 'db', title: 'PostgreSQL Target Connected', message: 'Target database healthy with read-only AST enforcement active.', time: 'just now', unread: true, tag: 'Security' });
+    }
+    if (systemReadiness?.inference?.status === 'healthy') {
+      items.push({ id: 'llm', title: 'Inference Engine Online', message: `${systemReadiness.inference.model || 'Local model'} ready for grounded SQL synthesis.`, time: 'just now', unread: true, tag: 'LLM' });
+    }
+    if (queryHistory.length > 0) {
+      items.push({ id: 'hist', title: 'Query Activity', message: `${queryHistory.length} recent ${queryHistory.length === 1 ? 'query' : 'queries'} recorded in audit history.`, time: 'just now', unread: false, tag: 'Activity' });
+    }
+    setNotifications(items);
+  }, [stats, systemReadiness, queryHistory]);
 
   const checkReadiness = async () => {
     try {
@@ -174,6 +187,32 @@ export default function App() {
     } catch (e) {
       console.warn('Could not load query history', e);
     }
+  };
+
+  const fetchStats = async () => {
+    try {
+      const res = await fetch('/api/v1/stats/overview');
+      if (res.ok) {
+        const data = await res.json();
+        setStats(data);
+      }
+    } catch (e) {
+      console.warn('Could not load live stats', e);
+    }
+  };
+
+  const exportRegionsCSV = () => {
+    if (!stats?.regions?.length) return;
+    const header = 'Rank,Region,Total Sales,Total Orders,Avg Order Value,Customers,Share %';
+    const lines = stats.regions.map((r, i) => `${i + 1},"${r.region}",${r.revenue},${r.orders},${r.avg_order_value},${r.customers},${r.pct}`);
+    const blob = new Blob([header + '\n' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', 'regional_sales_details.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const handleRunQuery = async (customPrompt) => {
@@ -365,6 +404,15 @@ export default function App() {
           </button>
 
           <button 
+            className={`da-nav-item ${activeTab === 'discover' ? 'active' : ''}`}
+            onClick={() => setActiveTab('discover')}
+            title={isSidebarCollapsed ? "Discover & Early Warnings" : undefined}
+          >
+            <Sparkles size={17} />
+            <span>Discover</span>
+          </button>
+
+          <button 
             className={`da-nav-item ${activeTab === 'schema' ? 'active' : ''}`}
             onClick={() => setActiveTab('schema')}
             title={isSidebarCollapsed ? "Schema Catalog" : undefined}
@@ -465,30 +513,18 @@ export default function App() {
         {/* Top Nav Bar with Notification and Profile */}
         <header className="da-top-bar">
           <div className="da-top-left">
-            <span className="da-top-agent-badge">
-              <span className="status-dot" />
-              <span>AI-02 Agent</span>
-            </span>
+            
 
             {/* Active View Indicator Pill */}
-            <div className="da-top-active-pill">
-              <Compass size={15} style={{ color: 'var(--teal-primary)' }} />
-              <span>{PAGE_TITLES[activeTab] || 'Analytics Workspace'}</span>
-            </div>
+            
           </div>
 
           <div className="da-top-right">
             {/* Database Connection Status Chip */}
-            <div className="da-top-status-chip" title="PostgreSQL 16 target connection on port 5433">
-              <span className="status-dot" />
-              <span>PostgreSQL 5433</span>
-            </div>
+            
 
             {/* Model Status Chip */}
-            <div className="da-top-status-chip" title="Local open-weight LLM on Ollama">
-              <Cpu size={13} style={{ color: 'var(--copper-primary)' }} />
-              <span>qwen2.5-coder:7b</span>
-            </div>
+            
 
             {/* Theme Toggle Button (Dark / Bright Mode) */}
             <button 
@@ -791,13 +827,13 @@ export default function App() {
                       return 'Good evening';
                     })()}, Deepak <span className="wave-hand">👋</span>
                   </h1>
-                  <p className="da-greeting-subtitle">
+                  {/* <p className="da-greeting-subtitle">
                     Autonomous Database Analytics is online. Active PostgreSQL 16 database connected on port 5433 with 7 verified sales tables, AST zero-trust defense, and local qwen2.5-coder:7b engine.
-                  </p>
+                  </p> */}
                 </div>
 
                 <div className="da-greeting-stats">
-                  <div className="da-greeting-stat-chip">
+                  {/* <div className="da-greeting-stat-chip">
                     <Server size={14} style={{ color: 'var(--teal-primary)' }} />
                     <div>
                       <div className="stat-chip-label">Target DB</div>
@@ -810,14 +846,14 @@ export default function App() {
                       <div className="stat-chip-label">Engine</div>
                       <div className="stat-chip-val">qwen2.5-coder:7b</div>
                     </div>
-                  </div>
-                  <div className="da-greeting-stat-chip">
+                  </div> */}
+                  {/* <div className="da-greeting-stat-chip">
                     <Shield size={14} style={{ color: '#10b981' }} />
                     <div>
                       <div className="stat-chip-label">Zero-Trust</div>
                       <div className="stat-chip-val">100% Guarded</div>
                     </div>
-                  </div>
+                  </div> */}
                 </div>
               </div>
 
@@ -956,7 +992,7 @@ export default function App() {
                 </div>
               )}
 
-              {/* 4 Stat Metric Cards (Directly Matching Image 1) */}
+              {/* 4 Stat Metric Cards — live aggregates from the target DB */}
               <div className="da-kpi-grid">
                 {/* Total Sales */}
                 <div className="da-kpi-card da-kpi-sales">
@@ -966,13 +1002,13 @@ export default function App() {
                     </div>
                     <div className="da-kpi-trend-pill">
                       <TrendingUp size={11} />
-                      <span>+12.5%</span>
+                      <span>Live</span>
                     </div>
                   </div>
                   <div className="da-kpi-body">
                     <div className="da-kpi-label">Total Sales</div>
-                    <div className="da-kpi-value">$3,642,255</div>
-                    <div className="da-kpi-subtext">vs previous period</div>
+                    <div className="da-kpi-value">{stats ? fmtMoney(stats.totals.total_sales) : '—'}</div>
+                    <div className="da-kpi-subtext">Completed orders (target DB)</div>
                   </div>
                 </div>
 
@@ -984,13 +1020,13 @@ export default function App() {
                     </div>
                     <div className="da-kpi-trend-pill">
                       <TrendingUp size={11} />
-                      <span>+8.3%</span>
+                      <span>Live</span>
                     </div>
                   </div>
                   <div className="da-kpi-body">
                     <div className="da-kpi-label">Total Orders</div>
-                    <div className="da-kpi-value">12,582</div>
-                    <div className="da-kpi-subtext">vs previous period</div>
+                    <div className="da-kpi-value">{stats ? fmtInt(stats.totals.total_orders) : '—'}</div>
+                    <div className="da-kpi-subtext">All order records</div>
                   </div>
                 </div>
 
@@ -1002,13 +1038,13 @@ export default function App() {
                     </div>
                     <div className="da-kpi-trend-pill">
                       <TrendingUp size={11} />
-                      <span>+6.1%</span>
+                      <span>Live</span>
                     </div>
                   </div>
                   <div className="da-kpi-body">
                     <div className="da-kpi-label">Total Customers</div>
-                    <div className="da-kpi-value">4,286</div>
-                    <div className="da-kpi-subtext">vs previous period</div>
+                    <div className="da-kpi-value">{stats ? fmtInt(stats.totals.total_customers) : '—'}</div>
+                    <div className="da-kpi-subtext">Registered accounts</div>
                   </div>
                 </div>
 
@@ -1020,13 +1056,13 @@ export default function App() {
                     </div>
                     <div className="da-kpi-trend-pill">
                       <TrendingUp size={11} />
-                      <span>+2.4%</span>
+                      <span>Live</span>
                     </div>
                   </div>
                   <div className="da-kpi-body">
                     <div className="da-kpi-label">Total Products</div>
-                    <div className="da-kpi-value">320</div>
-                    <div className="da-kpi-subtext">vs previous period</div>
+                    <div className="da-kpi-value">{stats ? fmtInt(stats.totals.total_products) : '—'}</div>
+                    <div className="da-kpi-subtext">Catalog items</div>
                   </div>
                 </div>
               </div>
@@ -1046,7 +1082,7 @@ export default function App() {
                     </span>
                   </div>
 
-                  {/* Grounded Business Explanation */}
+                  {/* Grounded Business Explanation + Evidence Provenance */}
                   {queryResult.explanation && (
                     <div className="explanation-card">
                       <div className="explanation-icon">
@@ -1055,11 +1091,39 @@ export default function App() {
                       <div style={{ flex: 1 }}>
                         <div className="explanation-title">
                           <span>Executive Summary</span>
-                          <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '999px', background: 'var(--success-bg)', color: 'var(--success)', fontWeight: 600 }}>
-                            Grounded in Target DB
-                          </span>
+                          {queryResult.evidence?.verified ? (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.7rem', padding: '2px 8px', borderRadius: '999px', background: 'var(--success-bg)', color: 'var(--success)', fontWeight: 600, border: '1px solid var(--success-border)' }}>
+                              <ShieldCheck size={11} />
+                              Verified against PostgreSQL — evidence-backed
+                            </span>
+                          ) : (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.7rem', padding: '2px 8px', borderRadius: '999px', background: 'var(--warning-bg, rgba(251,191,36,0.12))', color: 'var(--warning, #b45309)', fontWeight: 600, border: '1px solid var(--warning-border, rgba(251,191,36,0.35))' }}>
+                              <AlertCircle size={11} />
+                              Partially verified — review evidence below
+                            </span>
+                          )}
                         </div>
                         <p className="explanation-text">{queryResult.explanation}</p>
+                        {queryResult.evidence && (
+                          <details style={{ marginTop: 8 }}>
+                            <summary style={{ cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600, color: 'var(--teal-primary)', userSelect: 'none' }}>
+                              View evidence & data provenance
+                            </summary>
+                            <div style={{ marginTop: 8, padding: '10px 12px', borderRadius: 8, background: 'var(--bg-secondary)', border: '1px solid var(--border-card)', fontSize: '0.72rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              <div><strong style={{ color: 'var(--text-headings)' }}>Source:</strong> Live PostgreSQL target database (no dummy data) &bull; Model: {queryResult.evidence.model || queryResult.model_name || 'n/a'}</div>
+                              <div><strong style={{ color: 'var(--text-headings)' }}>Tables queried:</strong> {queryResult.evidence.tables_used?.length ? queryResult.evidence.tables_used.join(', ') : '—'}</div>
+                              <div><strong style={{ color: 'var(--text-headings)' }}>Result rows:</strong> {queryResult.evidence.row_count ?? queryResult.result_row_count ?? 0} &bull; Execution time: {queryResult.evidence.execution_time_ms ? `${queryResult.evidence.execution_time_ms} ms` : '—'}</div>
+                              <div><strong style={{ color: 'var(--text-headings)' }}>Schema grounding:</strong> {queryResult.evidence.schema_grounding?.passed ? '✓ Passed — every table/column exists in the database' : `✗ Rejected objects: ${(queryResult.evidence.schema_grounding?.hallucinated_tables || []).concat(queryResult.evidence.schema_grounding?.hallucinated_columns || []).join(', ') || 'n/a'}`}</div>
+                              <div><strong style={{ color: 'var(--text-headings)' }}>Numeric claims check:</strong> {queryResult.evidence.explanation_grounding?.passed ? `✓ All figures trace to result data (source: ${queryResult.evidence.explanation_source || 'llm_verified'})` : `✗ Unverified claims removed: ${(queryResult.evidence.explanation_grounding?.unverified_claims || []).join(', ')}`}</div>
+                              {queryResult.evidence.sql_executed && (
+                                <div style={{ marginTop: 2 }}>
+                                  <strong style={{ color: 'var(--text-headings)' }}>SQL executed on PostgreSQL:</strong>
+                                  <pre style={{ margin: '4px 0 0', padding: 8, borderRadius: 6, background: 'var(--bg-primary)', color: 'var(--text-secondary)', fontSize: '0.68rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{queryResult.evidence.sql_executed}</pre>
+                                </div>
+                              )}
+                            </div>
+                          </details>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1120,28 +1184,32 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* High Fidelity SVG / CSS Bar Chart */}
+                  {/* High Fidelity SVG / CSS Bar Chart — live regional revenue */}
                   <div style={{ height: '220px', width: '100%', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', padding: '1rem 0.5rem 0.5rem', gap: '16px' }}>
-                    {DEFAULT_REGIONAL_STATS.map((item, idx) => (
+                    {(stats?.regions || []).map((item, idx) => {
+                      const maxRev = Math.max(...stats.regions.map(r => r.revenue), 1);
+                      return (
                       <div key={idx} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', justifyContent: 'flex-end' }}>
                         <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-headings)', marginBottom: '6px' }}>
-                          {(item.sales / 1000).toFixed(1)}K
+                          {(item.revenue / 1000).toFixed(1)}K
                         </div>
                         <div 
                           style={{
                             width: '80%',
-                            height: `${item.heightPct * 0.75}%`,
-                            background: item.color,
+                            height: `${(item.revenue / maxRev) * 75}%`,
+                            background: REGION_COLORS[idx % REGION_COLORS.length],
                             borderRadius: '6px 6px 0 0',
                             transition: 'height 0.4s ease',
                           }} 
-                          title={`${item.region}: ${item.salesFormatted}`}
+                          title={`${item.region}: ${fmtMoney(item.revenue)}`}
                         />
                         <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)', marginTop: '8px' }}>
                           {item.region}
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
+                    {!stats && <div style={{ margin: 'auto', color: 'var(--text-muted)', fontSize: '0.8rem' }}>Loading live data…</div>}
                   </div>
                 </div>
 
@@ -1163,29 +1231,32 @@ export default function App() {
                     {/* SVG Donut */}
                     <div style={{ position: 'relative', width: '160px', height: '160px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <svg width="160" height="160" viewBox="0 0 160 160">
-                        {/* South 34.3% (stroke-dasharray based on 2*PI*55 = 345.57) */}
-                        <circle cx="80" cy="80" r="55" fill="none" stroke="#115e59" strokeWidth="26" strokeDasharray="118.5 227" strokeDashoffset="0" />
-                        {/* West 19.8% */}
-                        <circle cx="80" cy="80" r="55" fill="none" stroke="#14b8a6" strokeWidth="26" strokeDasharray="68.4 277" strokeDashoffset="-118.5" />
-                        {/* Central 18.5% */}
-                        <circle cx="80" cy="80" r="55" fill="none" stroke="#2dd4bf" strokeWidth="26" strokeDasharray="63.9 281" strokeDashoffset="-186.9" />
-                        {/* North 16.8% */}
-                        <circle cx="80" cy="80" r="55" fill="none" stroke="#e08343" strokeWidth="26" strokeDasharray="58 287" strokeDashoffset="-250.8" />
-                        {/* East 13.3% */}
-                        <circle cx="80" cy="80" r="55" fill="none" stroke="#c27847" strokeWidth="26" strokeDasharray="46 299" strokeDashoffset="-308.8" />
+                        {(() => {
+                          const C = 2 * Math.PI * 55;
+                          let acc = 0;
+                          return (stats?.regions || []).map((item, idx) => {
+                            const frac = (item.pct || 0) / 100;
+                            const dash = frac * C;
+                            const off = -acc * C;
+                            acc += frac;
+                            return (
+                              <circle key={idx} cx="80" cy="80" r="55" fill="none" stroke={REGION_COLORS[idx % REGION_COLORS.length]} strokeWidth="26" strokeDasharray={`${dash} ${C - dash}`} strokeDashoffset={off} />
+                            );
+                          });
+                        })()}
                       </svg>
                       <div style={{ position: 'absolute', textAlign: 'center' }}>
-                        <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-headings)', fontFamily: 'var(--font-display)' }}>3.64M</div>
+                        <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-headings)', fontFamily: 'var(--font-display)' }}>{stats ? fmtCompact(stats.totals.total_sales) : '—'}</div>
                         <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontWeight: 600 }}>Total Sales</div>
                       </div>
                     </div>
 
                     {/* Donut Legend */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, paddingLeft: '1.5rem' }}>
-                      {DEFAULT_REGIONAL_STATS.map((item, idx) => (
+                      {(stats?.regions || []).map((item, idx) => (
                         <div key={idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.82rem' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <div style={{ width: '9px', height: '9px', borderRadius: '50%', background: item.color }} />
+                            <div style={{ width: '9px', height: '9px', borderRadius: '50%', background: REGION_COLORS[idx % REGION_COLORS.length] }} />
                             <span style={{ color: 'var(--text-secondary)' }}>{item.region}</span>
                           </div>
                           <span style={{ fontWeight: 700, color: 'var(--text-headings)' }}>{item.pct}%</span>
@@ -1205,7 +1276,7 @@ export default function App() {
                       <FileSpreadsheet size={18} style={{ color: 'var(--copper-primary)' }} />
                       <div className="da-viz-title" style={{ fontSize: '0.96rem' }}>Regional Sales Details</div>
                     </div>
-                    <button className="da-select-small" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <button className="da-select-small" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={exportRegionsCSV} disabled={!stats}>
                       <Download size={12} />
                       <span>Export CSV</span>
                     </button>
@@ -1224,19 +1295,19 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody>
-                        {DEFAULT_REGIONAL_STATS.map((row) => (
-                          <tr key={row.rank}>
-                            <td style={{ color: 'var(--text-muted)' }}>{row.rank}</td>
+                        {(stats?.regions || []).map((row, idx) => (
+                          <tr key={row.region}>
+                            <td style={{ color: 'var(--text-muted)' }}>{idx + 1}</td>
                             <td>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
-                                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: row.color }} />
+                                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: REGION_COLORS[idx % REGION_COLORS.length] }} />
                                 <span>{row.region}</span>
                               </div>
                             </td>
-                            <td style={{ fontWeight: 700, color: 'var(--text-headings)' }}>{row.salesFormatted}</td>
-                            <td>{row.orders}</td>
-                            <td>{row.avgOrder}</td>
-                            <td>{row.customers}</td>
+                            <td style={{ fontWeight: 700, color: 'var(--text-headings)' }}>{fmtMoney(row.revenue)}</td>
+                            <td>{fmtInt(row.orders)}</td>
+                            <td>{fmtMoney(row.avg_order_value)}</td>
+                            <td>{fmtInt(row.customers)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1254,33 +1325,47 @@ export default function App() {
                   </div>
 
                   <div className="da-insights-list">
-                    <div className="da-insight-item">
-                      <div className="da-insight-num">1</div>
-                      <div className="da-insight-text">
-                        South region leads with <strong>$1.25M</strong> in sales (<strong>34.3%</strong> of total), significantly higher than other regions.
-                      </div>
-                    </div>
-
-                    <div className="da-insight-item">
-                      <div className="da-insight-num">2</div>
-                      <div className="da-insight-text">
-                        West region ranks second with <strong>$722.1K</strong> (<strong>19.8%</strong> of total sales).
-                      </div>
-                    </div>
-
-                    <div className="da-insight-item">
-                      <div className="da-insight-num copper">3</div>
-                      <div className="da-insight-text">
-                        The average order value is highest in <strong>East ($350.76)</strong> despite having the lowest total sales.
-                      </div>
-                    </div>
-
-                    <div className="da-insight-item">
-                      <div className="da-insight-num copper">4</div>
-                      <div className="da-insight-text">
-                        There is a <strong>12.5% increase</strong> in total sales compared to the previous period.
-                      </div>
-                    </div>
+                    {stats && stats.regions.length > 0 ? (() => {
+                      const regs = stats.regions;
+                      const top = regs[0];
+                      const second = regs[1];
+                      const topAov = [...regs].sort((a, b) => b.avg_order_value - a.avg_order_value)[0];
+                      const topCat = stats.product_categories[0];
+                      return (
+                        <>
+                          <div className="da-insight-item">
+                            <div className="da-insight-num">1</div>
+                            <div className="da-insight-text">
+                              <strong>{top.region}</strong> region leads with <strong>{fmtMoney(top.revenue)}</strong> in sales (<strong>{top.pct}%</strong> of total).
+                            </div>
+                          </div>
+                          {second && (
+                            <div className="da-insight-item">
+                              <div className="da-insight-num">2</div>
+                              <div className="da-insight-text">
+                                <strong>{second.region}</strong> region ranks second with <strong>{fmtMoney(second.revenue)}</strong> (<strong>{second.pct}%</strong> of total sales).
+                              </div>
+                            </div>
+                          )}
+                          <div className="da-insight-item">
+                            <div className="da-insight-num copper">3</div>
+                            <div className="da-insight-text">
+                              Highest average order value is in <strong>{topAov.region} ({fmtMoney(topAov.avg_order_value)})</strong>.
+                            </div>
+                          </div>
+                          {topCat && (
+                            <div className="da-insight-item">
+                              <div className="da-insight-num copper">4</div>
+                              <div className="da-insight-text">
+                                Top product category by revenue is <strong>{topCat.category}</strong> (<strong>{fmtMoney(topCat.revenue)}</strong>, {topCat.avg_margin_pct}% avg margin).
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })() : (
+                      <div style={{ padding: '1rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>Loading live insights…</div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1404,6 +1489,13 @@ export default function App() {
         )}
 
         {/* VIEW 2: Schema Catalog Tab */}
+        {/* VIEW 1b: Discover & Early Warnings */}
+        {activeTab === 'discover' && (
+          <div className="da-view-container">
+            <DiscoverView onExploreFurther={(q) => { setActiveTab('workspace'); handleRunQuery(q); }} />
+          </div>
+        )}
+
         {activeTab === 'schema' && (
           <div className="da-view-container">
             <SchemaBrowser onSelectTableQuery={(q) => { setActiveTab('workspace'); handleRunQuery(q); }} />

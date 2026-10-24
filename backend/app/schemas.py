@@ -93,6 +93,40 @@ class ConnectionTestResult(BaseModel):
     tables_found: int = 0
 
 
+class TargetDbSettingsUpdate(BaseModel):
+    """Live target PostgreSQL connection configuration (Settings screen)."""
+    host: str = Field(..., min_length=1, max_length=255)
+    port: int = Field(default=5432, ge=1, le=65535)
+    database_name: str = Field(..., min_length=1, max_length=200)
+    username: str = Field(..., min_length=1, max_length=200)
+    password: str = Field(default="")
+    schema_name: str = Field(default="sales", max_length=200)
+    statement_timeout_ms: int = Field(default=30000, ge=1000, le=300000)
+
+    @field_validator("host")
+    @classmethod
+    def validate_host(cls, v: str) -> str:
+        blocked = ["169.254.169.254", "metadata.google", "metadata.aws", "100.100.100.200"]
+        lower = v.lower().strip()
+        for b in blocked:
+            if b in lower:
+                raise ValueError(f"Host address not permitted: {v}")
+        return v
+
+
+class LlmSettingsUpdate(BaseModel):
+    """Live LLM runtime configuration (Settings screen)."""
+    model: str = Field(..., min_length=1, max_length=200)
+    base_url: str = Field(default="http://localhost:11434", max_length=500)
+    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+
+
+class SettingsApplyResult(BaseModel):
+    success: bool
+    message: str
+    detail: Optional[dict] = None
+
+
 # ---------------------------------------------------------------------------
 # Schema
 # ---------------------------------------------------------------------------
@@ -154,6 +188,7 @@ class QueryStatus(BaseModel):
     explanation: Optional[str] = None
     assumptions: Optional[list[str]] = None
     query_plan: Optional[dict] = None
+    evidence: Optional[dict] = None
     created_at: datetime
     completed_at: Optional[datetime] = None
 

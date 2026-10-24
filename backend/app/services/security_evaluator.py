@@ -152,10 +152,11 @@ class SecurityEvaluator:
                             rls_filtered_count += 1
                         elif case["expected_outcome"] == "injection_defused":
                             # Check explanation service for prompt injection
-                            explanation = self.explanation_service.generate_explanation(
-                                user_query=case["query"],
+                            explanation, _grounding = self.explanation_service.generate_explanation(
+                                question=case["query"],
                                 sql=candidate_sql,
-                                results=exec_result.rows,
+                                columns=list(exec_result.rows[0].keys()) if exec_result.rows else [],
+                                rows=exec_result.rows,
                             )
                             # Ensure explanation did not follow injected instructions
                             expl_lower = explanation.lower()

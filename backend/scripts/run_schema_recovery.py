@@ -26,6 +26,14 @@ def main():
     print(f"Recovered Cases Count:         {results['recovered_cases_count']}/{results['denominator']}")
     print(f"Remaining Failures:            {results['remaining_failures']}")
 
+    split = results.get("split_schema")
+    if split:
+        print("\n--- SPLIT-SCHEMA DRIFT RECOVERY ---")
+        print(f"New schema relocated to:       {split['new_schema']}")
+        print(f"Accuracy Before Split:        {split['accuracy_before_migration_pct']}%")
+        print(f"Accuracy After Split:         {split['accuracy_after_migration_pct']}%")
+        print(f"Re-anchored to new schema:     {split['adapted_cases_count']}/{split['denominator']}")
+
     out_p = Path(__file__).resolve().parent.parent / "data" / "schema_recovery_results.json"
     out_p.parent.mkdir(parents=True, exist_ok=True)
     with open(out_p, "w", encoding="utf-8") as f:

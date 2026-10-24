@@ -27,6 +27,27 @@ class SchemaService:
         """Clear all cached schemas to force fresh live reflection."""
         self._cache.clear()
 
+    def list_user_schemas(self, engine) -> list[str]:
+        """Return all non-system schemas that currently own tables.
+
+        Used for split-schema drift recovery so the agent can rediscover tables
+        that have been moved into a new PostgreSQL schema namespace.
+        """
+        try:
+            with engine.connect() as conn:
+                rows = conn.execute(text(
+                    "SELECT n.nspname FROM pg_namespace n "
+                    "JOIN pg_class c ON c.relnamespace = n.oid "
+                    "WHERE c.relkind = 'r' "
+                    "AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') "
+                    "AND n.nspname NOT LIKE 'pg_%' "
+                    "GROUP BY n.nspname ORDER BY n.nspname"
+                )).fetchall()
+            return [r[0] for r in rows if r[0]]
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("Failed to enumerate user schemas: %s", e)
+            return ["sales"]
+
     def discover_schema(
         self,
         engine,
@@ -159,6 +180,7 @@ class SchemaService:
         relevant_tables: list[str] | None = None,
         role: str = "executive",
         connection_id: str = "default",
+        schemas: list[str] | None = None,
     ) -> str:
         """Format schema information as a concise prompt context for the LLM.
 
@@ -167,6 +189,8 @@ class SchemaService:
             relevant_tables: If provided, only include these tables.
             role: The user's resolved security role for column & table access filtering.
             connection_id: Target connection ID if schema is fetched.
+            schemas: Optional list of schemas to reflect across (for split-schema
+                drift recovery). When None, defaults to the single 'sales' schema.
 
         Returns:
             A formatted string suitable for the LLM prompt.
@@ -174,7 +198,22 @@ class SchemaService:
         if schema is None:
             from app.database import get_default_target_engine
             engine = get_default_target_engine()
-            schema = self.discover_schema(engine, connection_id=connection_id, schema_name="sales")
+            if schemas:
+                combined_tables: list[TableInfo] = []
+                combined_rels: list[dict] = []
+                for s in schemas:
+                    resp = self.discover_schema(
+                        engine, connection_id=f"{connection_id}", schema_name=s, force_refresh=True
+                    )
+                    combined_tables.extend(resp.tables)
+                    combined_rels.extend(resp.relationships)
+                schema = SchemaResponse(
+                    connection_id=connection_id,
+                    tables=combined_tables,
+                    relationships=combined_rels,
+                )
+            else:
+                schema = self.discover_schema(engine, connection_id=connection_id, schema_name="sales")
 
         from app.services.role_service import is_table_allowed, is_column_allowed
 

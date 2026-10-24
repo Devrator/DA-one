@@ -58,6 +58,19 @@ class Settings(BaseSettings):
     auth_jwt_secret: str = "change-me-jwt-secret"
     auth_jwt_expiry_hours: int = 24
 
+    # Proactive Discovery (Phase 2: Discover & Early Warnings)
+    discovery_enabled: bool = True
+    discovery_schedule_enabled: bool = True
+    discovery_interval_minutes: int = 60
+    discovery_initial_delay_seconds: int = 20
+    discovery_run_role: str = "executive"
+    discovery_min_periods: int = 3
+    discovery_mom_threshold_pct: float = 18.0
+    discovery_anomaly_z_threshold: float = 1.8
+    discovery_concentration_threshold_pct: float = 40.0
+    discovery_underperform_z_threshold: float = 1.0
+    discovery_top_n_dimensions: int = 5
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.app_cors_origins.split(",") if o.strip()]
