@@ -56,6 +56,7 @@ class QueryExecutor:
         engine: Engine,
         sql: str,
         max_rows: int | None = None,
+        user_context: Any = None,
     ) -> ExecutionResult:
         """Execute a validated SQL query against the target database.
 
@@ -63,6 +64,7 @@ class QueryExecutor:
             engine: SQLAlchemy engine with restricted permissions.
             sql: Pre-validated SQL query.
             max_rows: Override the default row limit.
+            user_context: Optional UserSecurityContext for database-level RLS.
 
         Returns:
             ExecutionResult with the query results or error.
@@ -79,8 +81,23 @@ class QueryExecutor:
                     try:
                         conn.execute(text("SET TRANSACTION READ ONLY"))
                     except Exception:
-                        # Some connection configurations already enforce this
                         pass
+
+                    # Apply Database-Level Row Security (RLS) via transaction-scoped SET LOCAL
+                    if user_context:
+                        role = getattr(user_context, "role", "executive") or "executive"
+                        conn.execute(text(f"SET LOCAL app.user_role = '{role}'"))
+                        region_id = getattr(user_context, "region_id", None)
+                        if region_id is not None:
+                            conn.execute(text(f"SET LOCAL app.region_id = '{region_id}'"))
+                        else:
+                            conn.execute(text("SET LOCAL app.region_id = ''"))
+                        sales_rep = getattr(user_context, "sales_rep", None)
+                        if sales_rep:
+                            escaped_rep = str(sales_rep).replace("'", "''")
+                            conn.execute(text(f"SET LOCAL app.sales_rep = '{escaped_rep}'"))
+                        else:
+                            conn.execute(text("SET LOCAL app.sales_rep = ''"))
 
                     result = conn.execute(text(sql))
                     columns = list(result.keys()) if result.returns_rows else []

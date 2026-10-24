@@ -209,11 +209,23 @@ class SQLPolicyEngine:
             elif schema_name and schema_name.lower() not in {s.lower() for s in self.allowed_schemas}:
                 violations.append(f"Schema '{schema_name}' is not in the allowed schemas: {self.allowed_schemas}")
 
-
             # Check table allowlist if specified
             if self.allowed_tables is not None:
                 if full_name.lower() not in {t.lower() for t in self.allowed_tables}:
                     violations.append(f"Table '{full_name}' is not in the allowed tables")
+
+            # Check role-based table restrictions
+            from app.services.role_service import is_table_allowed, is_column_allowed
+            if table_name and not is_table_allowed(schema_name or "sales", table_name, role):
+                violations.append(f"Table '{table_name}' is restricted for role '{role}'")
+
+        # 8b. Check role-based column restrictions
+        from app.services.role_service import is_column_allowed
+        for col in statement.find_all(exp.Column):
+            col_name = col.name
+            table_ref = col.table or "*"
+            if col_name and not is_column_allowed("sales", table_ref, col_name, role):
+                violations.append(f"Column '{col_name}' is restricted for role '{role}'")
 
         # 9. Check for subqueries with prohibited operations
         for subquery in statement.find_all(exp.Subquery):
