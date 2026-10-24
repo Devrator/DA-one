@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Sparkles, Database, Play, BarChart3, ShieldCheck, Clock, CheckCircle2, 
-  Terminal, Layers, History, Activity, AlertCircle, ChevronRight, FileSpreadsheet, 
+  Terminal, Layers, History, Activity, AlertCircle, ChevronRight, ChevronLeft, FileSpreadsheet, 
   RefreshCw, Cpu, Server, Compass, Shield, MessageSquare, Flame, Download,
   Coins, ShoppingBag, Users, Package, TrendingUp, Lightbulb, Search, Paperclip,
   MoreVertical, ArrowUpRight, ArrowRight, Settings, FileText, ChevronDown, Check,
@@ -21,6 +21,8 @@ import SchemaRecoveryView from './components/SchemaRecoveryView';
 import ChaosArenaView from './components/ChaosArenaView';
 import DaOneLogo from './components/DaOneLogo';
 import LoginScreen from './components/LoginScreen';
+import ReportsView from './components/ReportsView';
+import SettingsView from './components/SettingsView';
 
 const PAGE_TITLES = {
   workspace: 'Analytics Workspace',
@@ -31,6 +33,8 @@ const PAGE_TITLES = {
   conversations: '50 Conversations',
   schema_recovery: 'Schema Recovery',
   audit: 'Query History',
+  reports: 'Executive Reports',
+  settings: 'System & Security Settings',
 };
 
 const MOCK_NOTIFICATIONS = [
@@ -60,6 +64,7 @@ const DEFAULT_REGIONAL_STATS = [
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('workspace');
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(true);
   const [question, setQuestion] = useState('');
   const [loading, setLoading] = useState(false);
@@ -328,10 +333,24 @@ export default function App() {
       {/* =========================================================================
           LEFT SIDEBAR: Logo, Clean Navigation Menu, System Status & User Profile
           ========================================================================= */}
-      <aside className="da-sidebar">
-        {/* Brand Logo with animated SVG loop */}
-        <div className="da-sidebar-brand" style={{ cursor: 'pointer' }} onClick={() => setActiveTab('workspace')}>
-          <DaOneLogo height={32} animated={true} />
+      <aside className={`da-sidebar ${isSidebarCollapsed ? 'collapsed' : ''}`}>
+        {/* Brand Logo with animated SVG loop and centered positioning */}
+        <div className="da-sidebar-brand">
+          <div 
+            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1 }} 
+            onClick={() => setActiveTab('workspace')}
+            title="DA-ONE Autonomous Database Analytics"
+          >
+            <DaOneLogo height={isSidebarCollapsed ? 34 : 46} showText={!isSidebarCollapsed} animated={true} />
+          </div>
+          <button 
+            className="da-collapse-btn" 
+            onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+            title={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            style={{ marginLeft: isSidebarCollapsed ? 0 : '8px' }}
+          >
+            {isSidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+          </button>
         </div>
 
         {/* Vertical Navigation Links */}
@@ -339,6 +358,7 @@ export default function App() {
           <button 
             className={`da-nav-item ${activeTab === 'workspace' ? 'active' : ''}`}
             onClick={() => setActiveTab('workspace')}
+            title={isSidebarCollapsed ? "Analytics Workspace" : undefined}
           >
             <Compass size={17} />
             <span>Analytics Workspace</span>
@@ -347,6 +367,7 @@ export default function App() {
           <button 
             className={`da-nav-item ${activeTab === 'schema' ? 'active' : ''}`}
             onClick={() => setActiveTab('schema')}
+            title={isSidebarCollapsed ? "Schema Catalog" : undefined}
           >
             <Database size={17} />
             <span>Schema Catalog</span>
@@ -355,6 +376,7 @@ export default function App() {
           <button 
             className={`da-nav-item ${activeTab === 'benchmark' ? 'active' : ''}`}
             onClick={() => setActiveTab('benchmark')}
+            title={isSidebarCollapsed ? "Benchmark (31 Cases)" : undefined}
           >
             <BarChart3 size={17} />
             <span>Benchmark (31 Cases)</span>
@@ -363,6 +385,7 @@ export default function App() {
           <button 
             className={`da-nav-item ${activeTab === 'security' ? 'active' : ''}`}
             onClick={() => setActiveTab('security')}
+            title={isSidebarCollapsed ? "Security Audit" : undefined}
           >
             <Shield size={17} />
             <span>Security Audit</span>
@@ -371,6 +394,7 @@ export default function App() {
           <button 
             className={`da-nav-item ${activeTab === 'conversations' ? 'active' : ''}`}
             onClick={() => setActiveTab('conversations')}
+            title={isSidebarCollapsed ? "50 Conversations" : undefined}
           >
             <MessageSquare size={17} />
             <span>50 Conversations</span>
@@ -379,6 +403,7 @@ export default function App() {
           <button 
             className={`da-nav-item ${activeTab === 'schema_recovery' ? 'active' : ''}`}
             onClick={() => setActiveTab('schema_recovery')}
+            title={isSidebarCollapsed ? "Schema Recovery" : undefined}
           >
             <RefreshCw size={17} />
             <span>Schema Recovery</span>
@@ -387,72 +412,48 @@ export default function App() {
           <button 
             className={`da-nav-item ${activeTab === 'audit' ? 'active' : ''}`}
             onClick={() => setActiveTab('audit')}
+            title={isSidebarCollapsed ? "Query History" : undefined}
           >
             <History size={17} />
             <span>Query History</span>
           </button>
 
           <button 
-            className="da-nav-item"
-            onClick={() => setActiveTab('workspace')}
-            style={{ opacity: 0.7 }}
+            className={`da-nav-item ${activeTab === 'reports' ? 'active' : ''}`}
+            onClick={() => setActiveTab('reports')}
+            title={isSidebarCollapsed ? "Reports" : undefined}
           >
             <FileText size={17} />
             <span>Reports</span>
           </button>
 
           <button 
-            className="da-nav-item"
-            onClick={() => setShowRoleModal(true)}
+            className={`da-nav-item ${activeTab === 'settings' ? 'active' : ''}`}
+            onClick={() => setActiveTab('settings')}
+            title={isSidebarCollapsed ? "Settings" : undefined}
           >
             <Settings size={17} />
             <span>Settings</span>
           </button>
         </nav>
 
-        {/* Sidebar Footer Cards */}
+        {/* Clean Sidebar Footer: Minimal Database Connection indicator (Model and Profile tiles removed as requested) */}
         <div className="da-sidebar-footer">
-          {/* Database Connection */}
-          <div className="da-status-card" title="PostgreSQL 16 connection on port 5433">
-            <Server size={14} style={{ color: 'var(--teal-primary)' }} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Database Connection</div>
-              <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span className="status-dot" />
-                <span>PostgreSQL 5433</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Model Status */}
-          <div className="da-status-card" title="Active open-weight LLM on Ollama">
-            <Cpu size={14} style={{ color: 'var(--copper-primary)' }} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Model</div>
-              <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                qwen2.5-coder:7b (Local)
-              </div>
-            </div>
-          </div>
-
-          {/* User Profile & Persona Switcher */}
           <div 
-            className="da-user-card" 
-            onClick={() => setShowRoleModal(true)}
-            title="Click to view & switch RBAC persona"
+            className="da-status-card" 
+            title="PostgreSQL 16 active on port 5433"
+            style={{ justifyContent: isSidebarCollapsed ? 'center' : 'flex-start', padding: isSidebarCollapsed ? '8px 0' : '6px 10px' }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <div className="da-user-avatar">DS</div>
-              <div>
-                <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-headings)' }}>
-                  Deepak Sharma
-                </div>
-                <div style={{ fontSize: '0.72rem', color: 'var(--teal-primary)', fontWeight: 600, textTransform: 'capitalize' }}>
-                  {currentRole.replace(/_/g, ' ')}
+            <Server size={14} style={{ color: 'var(--teal-primary)', flexShrink: 0 }} />
+            {!isSidebarCollapsed && (
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Database Connection</div>
+                <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span className="status-dot" />
+                  <span>PostgreSQL 5433</span>
                 </div>
               </div>
-            </div>
-            <MoreVertical size={14} style={{ color: 'var(--text-muted)' }} />
+            )}
           </div>
         </div>
       </aside>
@@ -773,8 +774,53 @@ export default function App() {
         {/* VIEW 1: Analytics Workspace (Image 1 Layout) */}
         {activeTab === 'workspace' && (
           <div className="da-workspace-grid">
-            {/* Center Column: Multi-Turn Thread Box, KPI Cards, Visualizations & Insights */}
+            {/* Center Column: Greeting Banner, Multi-Turn Thread Box, KPI Cards, Visualizations & Insights */}
             <div className="da-center-column">
+              {/* Executive Landing Greeting Banner */}
+              <div className="da-landing-greeting">
+                <div className="da-greeting-left">
+                  <div className="da-greeting-badge">
+                    <Sparkles size={12} style={{ color: 'var(--copper-primary)' }} />
+                    <span>Executive Analytics Workspace</span>
+                  </div>
+                  <h1 className="da-greeting-title">
+                    {(() => {
+                      const hr = new Date().getHours();
+                      if (hr < 12) return 'Good morning';
+                      if (hr < 17) return 'Good afternoon';
+                      return 'Good evening';
+                    })()}, Deepak <span className="wave-hand">👋</span>
+                  </h1>
+                  <p className="da-greeting-subtitle">
+                    Autonomous Database Analytics is online. Active PostgreSQL 16 database connected on port 5433 with 7 verified sales tables, AST zero-trust defense, and local qwen2.5-coder:7b engine.
+                  </p>
+                </div>
+
+                <div className="da-greeting-stats">
+                  <div className="da-greeting-stat-chip">
+                    <Server size={14} style={{ color: 'var(--teal-primary)' }} />
+                    <div>
+                      <div className="stat-chip-label">Target DB</div>
+                      <div className="stat-chip-val">PostgreSQL 5433</div>
+                    </div>
+                  </div>
+                  <div className="da-greeting-stat-chip">
+                    <Cpu size={14} style={{ color: 'var(--copper-primary)' }} />
+                    <div>
+                      <div className="stat-chip-label">Engine</div>
+                      <div className="stat-chip-val">qwen2.5-coder:7b</div>
+                    </div>
+                  </div>
+                  <div className="da-greeting-stat-chip">
+                    <Shield size={14} style={{ color: '#10b981' }} />
+                    <div>
+                      <div className="stat-chip-label">Zero-Trust</div>
+                      <div className="stat-chip-val">100% Guarded</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* Multi-Turn Conversation Thread Box */}
               <div className="da-thread-box">
                 {/* Header Row */}
@@ -1403,6 +1449,25 @@ export default function App() {
         {activeTab === 'audit' && (
           <div className="da-view-container">
             <AuditLog />
+          </div>
+        )}
+
+        {/* VIEW 9: Executive Reports Tab */}
+        {activeTab === 'reports' && (
+          <div className="da-view-container">
+            <ReportsView />
+          </div>
+        )}
+
+        {/* VIEW 10: System Configuration & Security Settings */}
+        {activeTab === 'settings' && (
+          <div className="da-view-container">
+            <SettingsView 
+              currentRole={currentRole} 
+              onRoleChange={setCurrentRole} 
+              theme={theme} 
+              onToggleTheme={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} 
+            />
           </div>
         )}
       </div>

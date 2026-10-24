@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { MessageSquare, Play, CheckCircle2, AlertCircle, Clock, Tag, ChevronDown, ChevronRight, Activity, Search } from 'lucide-react';
+import { MessageSquare, Play, CheckCircle2, AlertCircle, Clock, Tag, ChevronDown, ChevronRight, Activity, Search, Table, Grid } from 'lucide-react';
+import PageHeader from './PageHeader';
 
 export default function ConversationsEvaluationView() {
   const [data, setData] = useState(null);
@@ -7,6 +8,7 @@ export default function ConversationsEvaluationView() {
   const [expandedScenarios, setExpandedScenarios] = useState({});
   const [filterCategory, setFilterCategory] = useState('all');
   const [search, setSearch] = useState('');
+  const [viewMode, setViewMode] = useState('cards'); // 'cards' | 'table'
 
   const fetchResults = async () => {
     try {
@@ -61,50 +63,54 @@ export default function ConversationsEvaluationView() {
   });
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%', maxWidth: '1280px', margin: '0 auto' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', color: 'var(--text-headings)', margin: 0, fontWeight: 700 }}>
-              50-Scenario Multi-Turn Conversation Benchmark
-            </h2>
-            <span style={{
-              background: 'rgba(56, 189, 248, 0.15)',
-              border: '1px solid rgba(56, 189, 248, 0.4)',
-              color: '#38bdf8',
-              fontSize: '11px',
-              padding: '2px 8px',
-              borderRadius: '4px',
-              fontWeight: 600,
-            }}>
-              150 Total Turns &bull; 3 Turns / Scenario
-            </span>
-          </div>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '4px' }}>
-            Evaluates conversational context carryover (active metric, grouping, filters), date drilldowns, ranking comparisons, clarifying ambiguous requests, and boundary maintenance.
-          </p>
-        </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', width: '100%', maxWidth: '1360px', margin: '0 auto' }}>
+      {/* Standardized Executive Page Header */}
+      <PageHeader
+        icon={MessageSquare}
+        title="50 Conversations Multi-Turn Benchmark"
+        subtitle="Autonomous multi-turn conversational benchmark across 50 scenarios (150 total turns). Evaluates context carryover, temporal filter retention, metric pivoting, and boundary defense."
+        badge={`${data?.total_scenarios || 50} Scenarios • ${data?.total_turns || 150} Turns`}
+        badgeType="teal"
+        actions={
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ display: 'flex', background: 'var(--bg-surface-subtle)', border: '1px solid var(--border-card)', borderRadius: '8px', padding: '2px' }}>
+              <button 
+                onClick={() => setViewMode('cards')} 
+                style={{ padding: '5px 10px', border: 'none', borderRadius: '6px', cursor: 'pointer', background: viewMode === 'cards' ? 'var(--teal-primary)' : 'transparent', color: viewMode === 'cards' ? '#fff' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.74rem', fontWeight: 600 }}
+              >
+                <Grid size={13} />
+                <span>Cards</span>
+              </button>
+              <button 
+                onClick={() => setViewMode('table')} 
+                style={{ padding: '5px 10px', border: 'none', borderRadius: '6px', cursor: 'pointer', background: viewMode === 'table' ? 'var(--teal-primary)' : 'transparent', color: viewMode === 'table' ? '#fff' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.74rem', fontWeight: 600 }}
+              >
+                <Table size={13} />
+                <span>Table</span>
+              </button>
+            </div>
 
-        <button
-          className="btn-primary"
-          onClick={handleRunSuite}
-          disabled={loading}
-          style={{ padding: '8px 20px', display: 'flex', alignItems: 'center', gap: '8px' }}
-        >
-          {loading ? (
-            <>
-              <Activity size={16} className="animate-spin" />
-              Running 50-Scenario Suite...
-            </>
-          ) : (
-            <>
-              <Play size={16} fill="currentColor" />
-              Execute 50-Conversation Suite
-            </>
-          )}
-        </button>
-      </div>
+            <button
+              className="btn-primary"
+              onClick={handleRunSuite}
+              disabled={loading}
+              style={{ padding: '8px 18px', display: 'flex', alignItems: 'center', gap: '8px' }}
+            >
+              {loading ? (
+                <>
+                  <Activity size={15} className="animate-spin" />
+                  <span>Running Suite...</span>
+                </>
+              ) : (
+                <>
+                  <Play size={14} fill="currentColor" />
+                  <span>Execute 50-Conversation Suite</span>
+                </>
+              )}
+            </button>
+          </div>
+        }
+      />
 
       {/* KPI Cards */}
       <div className="metrics-grid">
@@ -213,134 +219,239 @@ export default function ConversationsEvaluationView() {
         </div>
       </div>
 
-      {/* Scenario Cards */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        {filtered.map((s) => {
-          const isExpanded = expandedScenarios[s.id];
-          return (
-            <div
-              key={s.id}
-              style={{
-                background: 'var(--bg-surface)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-md)',
-                overflow: 'hidden',
-              }}
-            >
+      {/* Scenario Content: Table or Cards */}
+      {viewMode === 'table' ? (
+        <div className="data-table-card">
+          <div className="table-wrapper">
+            <table className="styled-table">
+              <thead>
+                <tr>
+                  <th style={{ width: '90px' }}>ID</th>
+                  <th>Scenario Title</th>
+                  <th style={{ width: '150px' }}>Category</th>
+                  <th style={{ width: '130px' }}>Turn Correctness</th>
+                  <th style={{ width: '130px' }}>Status</th>
+                  <th style={{ width: '100px' }}>Avg Latency</th>
+                  <th style={{ width: '90px', textAlign: 'center' }}>Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((s) => {
+                  const passedTurnsCount = s.turns?.filter(t => t.passed)?.length || 0;
+                  const totalTurnsCount = s.turns?.length || 3;
+                  const avgLat = Math.round((s.turns?.reduce((acc, t) => acc + (t.latency_ms || 200), 0) || 600) / totalTurnsCount);
+                  const isExpanded = expandedScenarios[s.id];
+
+                  return (
+                    <React.Fragment key={s.id}>
+                      <tr 
+                        onClick={() => toggleScenario(s.id)}
+                        style={{ cursor: 'pointer', background: isExpanded ? 'rgba(17, 94, 89, 0.05)' : 'transparent' }}
+                      >
+                        <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem', fontWeight: 700, color: 'var(--teal-primary)' }}>
+                          {s.id}
+                        </td>
+                        <td style={{ fontWeight: 600, fontSize: '0.84rem' }}>
+                          {s.title}
+                        </td>
+                        <td>
+                          <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '4px', background: 'var(--bg-surface-subtle)', border: '1px solid var(--border-card)', color: 'var(--text-secondary)' }}>
+                            {s.category}
+                          </span>
+                        </td>
+                        <td style={{ fontSize: '0.8rem', fontWeight: 600 }}>
+                          {passedTurnsCount} / {totalTurnsCount} Turns
+                        </td>
+                        <td>
+                          <span style={{
+                            fontSize: '0.72rem',
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            fontWeight: 700,
+                            background: s.passed ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                            color: s.passed ? '#10b981' : '#ef4444',
+                            border: `1px solid ${s.passed ? 'rgba(16, 185, 129, 0.25)' : 'rgba(239, 68, 68, 0.25)'}`
+                          }}>
+                            {s.passed ? 'PASSED' : 'PARTIAL'}
+                          </span>
+                        </td>
+                        <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                          {avgLat} ms
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <button 
+                            style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--teal-primary)' }}
+                            onClick={(e) => { e.stopPropagation(); toggleScenario(s.id); }}
+                          >
+                            {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          </button>
+                        </td>
+                      </tr>
+                      {isExpanded && (
+                        <tr>
+                          <td colSpan={7} style={{ padding: '12px 16px', background: 'var(--bg-surface-subtle)' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              {s.turns?.map((t) => (
+                                <div key={t.turn_number} style={{ padding: '8px 12px', borderRadius: '8px', background: 'var(--bg-surface)', border: '1px solid var(--border-card)' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                      <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '1px 6px', borderRadius: '3px', background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }}>
+                                        Turn {t.turn_number}
+                                      </span>
+                                      <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>{t.query}</span>
+                                    </div>
+                                    <span style={{ fontSize: '0.72rem', fontWeight: 700, color: t.passed ? '#10b981' : '#ef4444' }}>
+                                      {t.passed ? 'PASSED' : 'FAILED'} &bull; {Math.round(t.latency_ms)}ms
+                                    </span>
+                                  </div>
+                                  {t.sql && (
+                                    <div style={{ fontSize: '0.72rem', fontFamily: 'var(--font-mono)', color: 'var(--teal-primary)', marginTop: '4px', overflowX: 'auto', background: 'var(--bg-surface-subtle)', padding: '6px 8px', borderRadius: '4px' }}>
+                                      {t.sql}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        /* Scenario Cards */
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {filtered.map((s) => {
+            const isExpanded = expandedScenarios[s.id];
+            return (
               <div
-                onClick={() => toggleScenario(s.id)}
+                key={s.id}
                 style={{
-                  padding: '12px 16px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  cursor: 'pointer',
-                  userSelect: 'none',
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-md)',
+                  overflow: 'hidden',
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  {isExpanded ? <ChevronDown size={15} color="#94a3b8" /> : <ChevronRight size={15} color="#94a3b8" />}
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: '#94a3b8' }}>
-                    {s.id}
-                  </span>
-                  <span style={{ fontWeight: 600, color: 'var(--text-headings)', fontSize: '13px' }}>
-                    {s.title}
-                  </span>
-                  <span style={{
-                    fontSize: '10px',
-                    padding: '1px 6px',
-                    borderRadius: '4px',
-                    background: 'var(--bg-secondary)',
-                    color: 'var(--text-muted)',
-                  }}>
-                    {s.category}
-                  </span>
+                <div
+                  onClick={() => toggleScenario(s.id)}
+                  style={{
+                    padding: '12px 16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    {isExpanded ? <ChevronDown size={15} color="#94a3b8" /> : <ChevronRight size={15} color="#94a3b8" />}
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: '#94a3b8' }}>
+                      {s.id}
+                    </span>
+                    <span style={{ fontWeight: 600, color: 'var(--text-headings)', fontSize: '13px' }}>
+                      {s.title}
+                    </span>
+                    <span style={{
+                      fontSize: '10px',
+                      padding: '1px 6px',
+                      borderRadius: '4px',
+                      background: 'var(--bg-secondary)',
+                      color: 'var(--text-muted)',
+                    }}>
+                      {s.category}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{
+                      fontSize: '11px',
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      fontWeight: 600,
+                      background: s.passed ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                      color: s.passed ? '#34d399' : '#f87171',
+                    }}>
+                      {s.passed ? '3/3 TURNS PASSED' : 'PARTIAL / FAILED'}
+                    </span>
+                  </div>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{
-                    fontSize: '11px',
-                    padding: '2px 8px',
-                    borderRadius: '4px',
-                    fontWeight: 600,
-                    background: s.passed ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                    color: s.passed ? '#34d399' : '#f87171',
+                {isExpanded && (
+                  <div style={{
+                    padding: '12px 16px',
+                    background: 'rgba(251, 249, 245, 0.6)',
+                    borderTop: '1px solid var(--border-subtle)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px',
                   }}>
-                    {s.passed ? '3/3 TURNS PASSED' : 'PARTIAL / FAILED'}
-                  </span>
-                </div>
-              </div>
-
-              {isExpanded && (
-                <div style={{
-                  padding: '12px 16px',
-                  background: 'rgba(251, 249, 245, 0.6)',
-                  borderTop: '1px solid var(--border-subtle)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '8px',
-                }}>
-                  {s.turns.map((t) => (
-                    <div
-                      key={t.turn_number}
-                      style={{
-                        padding: '10px 12px',
-                        background: 'rgba(255, 255, 255, 0.6)',
-                        border: '1px solid var(--border-card)',
-                        borderRadius: '6px',
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {s.turns.map((t) => (
+                      <div
+                        key={t.turn_number}
+                        style={{
+                          padding: '10px 12px',
+                          background: 'rgba(255, 255, 255, 0.6)',
+                          border: '1px solid var(--border-card)',
+                          borderRadius: '6px',
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{
+                              fontSize: '10px',
+                              fontWeight: 700,
+                              padding: '1px 6px',
+                              borderRadius: '3px',
+                              background: 'rgba(56, 189, 248, 0.15)',
+                              color: '#38bdf8',
+                            }}>
+                              Turn {t.turn_number}
+                            </span>
+                            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-headings)' }}>
+                              {t.query}
+                            </span>
+                          </div>
                           <span style={{
                             fontSize: '10px',
-                            fontWeight: 700,
-                            padding: '1px 6px',
-                            borderRadius: '3px',
-                            background: 'rgba(56, 189, 248, 0.15)',
-                            color: '#38bdf8',
+                            color: t.passed ? '#10b981' : '#f87171',
+                            fontWeight: 600,
                           }}>
-                            Turn {t.turn_number}
-                          </span>
-                          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-headings)' }}>
-                            {t.query}
+                            {t.passed ? 'PASSED' : 'FAILED'} &bull; {Math.round(t.latency_ms)}ms
                           </span>
                         </div>
-                        <span style={{
-                          fontSize: '10px',
-                          color: t.passed ? '#10b981' : '#f87171',
-                          fontWeight: 600,
-                        }}>
-                          {t.passed ? 'PASSED' : 'FAILED'} &bull; {Math.round(t.latency_ms)}ms
-                        </span>
+                        {t.sql && (
+                          <div style={{
+                            fontSize: '11px',
+                            fontFamily: 'var(--font-mono)',
+                            color: 'var(--teal-primary)',
+                            background: 'rgba(251, 249, 245, 0.9)',
+                            padding: '6px 8px',
+                            borderRadius: '4px',
+                            marginTop: '4px',
+                            overflowX: 'auto',
+                          }}>
+                            {t.sql}
+                          </div>
+                        )}
+                        {t.fail_reason && (
+                          <div style={{ fontSize: '11px', color: '#f87171', marginTop: '3px' }}>
+                            Error: {t.fail_reason}
+                          </div>
+                        )}
                       </div>
-                      {t.sql && (
-                        <div style={{
-                          fontSize: '11px',
-                          fontFamily: 'var(--font-mono)',
-                          color: 'var(--teal-primary)',
-                          background: 'rgba(251, 249, 245, 0.9)',
-                          padding: '6px 8px',
-                          borderRadius: '4px',
-                          marginTop: '4px',
-                          overflowX: 'auto',
-                        }}>
-                          {t.sql}
-                        </div>
-                      )}
-                      {t.fail_reason && (
-                        <div style={{ fontSize: '11px', color: '#f87171', marginTop: '3px' }}>
-                          Error: {t.fail_reason}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

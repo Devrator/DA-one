@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, CheckCircle2, XCircle, AlertTriangle, ShieldCheck, Clock, Award, Activity, AlertCircle, RefreshCw, ChevronDown, ChevronRight, Database, Code2 } from 'lucide-react';
+import { Play, CheckCircle2, XCircle, AlertTriangle, ShieldCheck, Clock, Award, Activity, AlertCircle, RefreshCw, ChevronDown, ChevronRight, Database, Code2, BarChart3 } from 'lucide-react';
+import PageHeader from './PageHeader';
 
 export default function BenchmarkRunner() {
   const [runs, setRuns] = useState([]);
@@ -138,61 +139,59 @@ export default function BenchmarkRunner() {
   const clarifyPct = clarificationCases.length > 0 ? Math.round((clarificationCorrectCount / clarificationCases.length) * 100) : null;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%', maxWidth: '1280px', margin: '0 auto' }}>
-      {/* Header and Controls */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
-        <div>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', color: 'var(--text-headings)', fontWeight: 700 }}>
-            Empirical Evaluation Benchmark
-          </h2>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-            Curated 31-case ground-truth test suite measuring semantic correctness, execution success, AST security rejection, and latency.
-          </p>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          {runs.length > 0 && (
-            <select
-              value={activeRun?.id || ''}
-              onChange={(e) => fetchRunDetails(e.target.value)}
-              style={{
-                background: 'var(--bg-surface)',
-                border: '1px solid var(--border-subtle)',
-                color: 'var(--text-secondary)',
-                padding: '7px 12px',
-                borderRadius: 'var(--radius-md)',
-                fontSize: '0.8rem',
-                outline: 'none',
-              }}
-            >
-              {runs.map((r, i) => (
-                <option key={r.id} value={r.id}>
-                  Run #{runs.length - i} — {r.status.toUpperCase()} ({r.correct_results}/{r.total_cases || 31} semantic correct)
-                </option>
-              ))}
-            </select>
-          )}
-
-          <button
-            className="btn-primary"
-            onClick={handleStartBenchmark}
-            disabled={isRunning || activeRun?.status === 'running'}
-            style={{ padding: '8px 20px' }}
-          >
-            {isRunning || activeRun?.status === 'running' ? (
-              <>
-                <Activity size={16} className="animate-spin" />
-                Running Suite...
-              </>
-            ) : (
-              <>
-                <Play size={16} fill="currentColor" />
-                Run Full Benchmark Suite
-              </>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', width: '100%', maxWidth: '1360px', margin: '0 auto' }}>
+      {/* Standardized Executive Page Header */}
+      <PageHeader
+        icon={BarChart3}
+        title="Semantic Accuracy Benchmark (31 Cases)"
+        subtitle="Curated 31-case ground-truth test suite measuring semantic SQL correctness, join accuracy, aggregation validity, AST security rejection, and execution latency."
+        badge={`${activeRun?.total_cases || 31} Golden Test Cases`}
+        badgeType="teal"
+        actions={
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {runs.length > 0 && (
+              <select
+                value={activeRun?.id || ''}
+                onChange={(e) => fetchRunDetails(e.target.value)}
+                style={{
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-secondary)',
+                  padding: '7px 12px',
+                  borderRadius: 'var(--radius-md)',
+                  fontSize: '0.8rem',
+                  outline: 'none',
+                }}
+              >
+                {runs.map((r, i) => (
+                  <option key={r.id} value={r.id}>
+                    Run #{runs.length - i} — {r.status.toUpperCase()} ({r.correct_results}/{r.total_cases || 31} semantic correct)
+                  </option>
+                ))}
+              </select>
             )}
-          </button>
-        </div>
-      </div>
+
+            <button
+              className="btn-primary"
+              onClick={handleStartBenchmark}
+              disabled={isRunning || activeRun?.status === 'running'}
+              style={{ padding: '8px 18px', display: 'flex', alignItems: 'center', gap: '8px' }}
+            >
+              {isRunning || activeRun?.status === 'running' ? (
+                <>
+                  <Activity size={15} className="animate-spin" />
+                  <span>Running Suite...</span>
+                </>
+              ) : (
+                <>
+                  <Play size={14} fill="currentColor" />
+                  <span>Run Full Benchmark Suite</span>
+                </>
+              )}
+            </button>
+          </div>
+        }
+      />
 
       {/* Meaningful Run Error Banner */}
       {activeRun?.status === 'failed' && (

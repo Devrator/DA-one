@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Database, Table, Key, Eye, Search, Layers, RefreshCw } from 'lucide-react';
+import PageHeader from './PageHeader';
 
 export default function SchemaBrowser({ onSelectTableQuery }) {
   const [schemaData, setSchemaData] = useState(null);
@@ -58,40 +59,41 @@ export default function SchemaBrowser({ onSelectTableQuery }) {
   );
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%', maxWidth: '1200px', margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', color: 'var(--text-headings)', fontWeight: 700 }}>Schema Catalog & Relations</h2>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-            Target Database: <code style={{ color: 'var(--accent-primary)', fontFamily: 'var(--font-mono)' }}>querypilot_target</code> (Schema: <code style={{ color: '#38bdf8', fontFamily: 'var(--font-mono)' }}>sales</code>)
-          </p>
-        </div>
-
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-            <Search size={15} style={{ position: 'absolute', left: '10px', color: 'var(--text-muted)' }} />
-            <input
-              type="text"
-              placeholder="Filter tables or columns..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={{
-                background: 'var(--bg-surface)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-md)',
-                padding: '6px 12px 6px 32px',
-                color: 'var(--text-primary)',
-                fontSize: '0.85rem',
-                outline: 'none',
-              }}
-            />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', width: '100%', maxWidth: '1360px', margin: '0 auto' }}>
+      {/* Standardized Executive Page Header */}
+      <PageHeader
+        icon={Database}
+        title="Database Schema Catalog & Relations"
+        subtitle="Introspected relational tables, primary/foreign key relationships, column types, and row distribution across PostgreSQL 16 (schema: sales)."
+        badge={`${tables.length || 7} Target Tables Verified`}
+        badgeType="teal"
+        actions={
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+              <Search size={14} style={{ position: 'absolute', left: '10px', color: 'var(--text-muted)' }} />
+              <input
+                type="text"
+                placeholder="Filter tables or columns..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                style={{
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '6px 12px 6px 30px',
+                  color: 'var(--text-primary)',
+                  fontSize: '0.84rem',
+                  outline: 'none',
+                }}
+              />
+            </div>
+            <button className="btn-primary" onClick={fetchSchema} disabled={loading} style={{ padding: '7px 14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+              <span>Refresh Schema</span>
+            </button>
           </div>
-          <button className="btn-icon" onClick={fetchSchema} disabled={loading}>
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-            Refresh
-          </button>
-        </div>
-      </div>
+        }
+      />
 
       {loading ? (
         <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>

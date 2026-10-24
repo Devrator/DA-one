@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { RefreshCw, CheckCircle2, AlertCircle, ArrowRight, Play, Database, Activity, Code2, Layers } from 'lucide-react';
+import PageHeader from './PageHeader';
 
 export default function SchemaRecoveryView() {
   const [data, setData] = useState(null);
@@ -46,50 +47,35 @@ export default function SchemaRecoveryView() {
   const afterResults = data?.after_results || [];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%', maxWidth: '1280px', margin: '0 auto' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', color: 'var(--text-headings)', margin: 0, fontWeight: 700 }}>
-              Dynamic Schema-Change Recovery Engine
-            </h2>
-            <span style={{
-              background: 'rgba(56, 189, 248, 0.15)',
-              border: '1px solid rgba(56, 189, 248, 0.4)',
-              color: '#38bdf8',
-              fontSize: '11px',
-              padding: '2px 8px',
-              borderRadius: '4px',
-              fontWeight: 600,
-            }}>
-              Zero Retraining Required
-            </span>
-          </div>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '4px' }}>
-            Demonstrates autonomous query adaptation when target database tables (<code style={{ color: '#38bdf8' }}>product_catalog &rarr; products</code>) and columns (<code style={{ color: '#38bdf8' }}>discount_pct &rarr; discount_rate</code>) undergo controlled migrations.
-          </p>
-        </div>
-
-        <button
-          className="btn-primary"
-          onClick={handleRunRecovery}
-          disabled={loading}
-          style={{ padding: '8px 20px', display: 'flex', alignItems: 'center', gap: '8px' }}
-        >
-          {loading ? (
-            <>
-              <Activity size={16} className="animate-spin" />
-              Executing Migration & Recovery...
-            </>
-          ) : (
-            <>
-              <Play size={16} fill="currentColor" />
-              Execute Live Schema Recovery Test
-            </>
-          )}
-        </button>
-      </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', width: '100%', maxWidth: '1360px', margin: '0 auto' }}>
+      {/* Standardized Executive Page Header */}
+      <PageHeader
+        icon={RefreshCw}
+        title="Dynamic Schema Drift Recovery"
+        subtitle="Validates autonomous schema reflection and query self-healing when target tables (product_catalog → products) or columns (discount_pct → discount_rate) undergo migrations without model fine-tuning."
+        badge="Zero Retraining Required"
+        badgeType="teal"
+        actions={
+          <button
+            className="btn-primary"
+            onClick={handleRunRecovery}
+            disabled={loading}
+            style={{ padding: '8px 18px', display: 'flex', alignItems: 'center', gap: '8px' }}
+          >
+            {loading ? (
+              <>
+                <Activity size={15} className="animate-spin" />
+                <span>Executing Recovery...</span>
+              </>
+            ) : (
+              <>
+                <Play size={14} fill="currentColor" />
+                <span>Execute Live Schema Recovery</span>
+              </>
+            )}
+          </button>
+        }
+      />
 
       {/* KPI Cards */}
       <div className="metrics-grid">
