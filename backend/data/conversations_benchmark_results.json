@@ -1,0 +1,182 @@
+{
+  "total_scenarios": 5,
+  "fully_passed_scenarios": 4,
+  "scenario_accuracy_pct": 80.0,
+  "total_turns": 15,
+  "passed_turns": 14,
+  "turn_accuracy_pct": 93.3,
+  "clarification_turns": 0,
+  "correct_clarifications": 0,
+  "clarification_rate_pct": 100.0,
+  "execution_failures": 1,
+  "security_failures": 0,
+  "median_latency_ms": 35022.8,
+  "duration_seconds": 688.56,
+  "scenarios": [
+    {
+      "id": "CONV-01",
+      "title": "Regional Revenue Temporal Drilldown",
+      "category": "temporal_filter",
+      "role": "executive",
+      "passed": false,
+      "turns": [
+        {
+          "turn_number": 1,
+          "query": "Show total revenue by region",
+          "sql": "SELECT r.region_name, SUM(s.quantity * s.unit_price * (1 - s.discount_pct / 100)) AS total_revenue FROM sales.sales_orders o JOIN sales.sales_order_items s ON o.order_id = s.order_id JOIN sales.regions r ON o.region_id = r.region_id WHERE o.status = 'completed' GROUP BY r.region_name ORDER BY total_revenue DESC LIMIT 5",
+          "passed": true,
+          "fail_reason": "",
+          "latency_ms": 33359.2
+        },
+        {
+          "turn_number": 2,
+          "query": "Now only for orders placed in March 2026",
+          "sql": "SELECT r.region_name, SUM(s.quantity * s.unit_price * (1 - s.discount_pct / 100)) AS total_revenue FROM sales.sales_orders o JOIN sales.sales_order_items s ON o.order_id = s.order_id JOIN sales.regions r ON o.region_id = r.region_id WHERE o.status = 'completed' AND EXTRACT(MONTH FROM o.order_date) = 3 AND EXTRACT(YEAR FROM o.order_date) = 2026 GROUP BY r.region_name ORDER BY total_revenue DESC LIMIT 5",
+          "passed": true,
+          "fail_reason": "",
+          "latency_ms": 35872.8
+        },
+        {
+          "turn_number": 3,
+          "query": "Compare March with February 2026 for each region",
+          "sql": "WITH revenue_feb AS (SELECT r.region_name, SUM(s.quantity * s.unit_price * (1 - s.discount_pct / 100)) AS total_revenue FROM sales.sales_orders AS o JOIN sales.sales_order_items AS s ON o.order_id = s.order_id JOIN sales.regions AS r ON o.region_id = r.region_id WHERE o.status = 'completed' AND EXTRACT(MONTH FROM o.order_date) = 2 AND EXTRACT(YEAR FROM o.order_date) = 2026 GROUP BY r.region_name), revenue_mar AS (SELECT r.region_name, SUM(s.quantity * s.unit_price * (1 - s.discount_pct / 100)) AS total_revenue FROM sales.sales_orders AS o JOIN sales.sales_order_items AS s ON o.order_id = s.order_id JOIN sales.regions AS r ON o.region_id = r.region_id WHERE o.status = 'completed' AND EXTRACT(MONTH FROM o.order_date) = 3 AND EXTRACT(YEAR FROM o.order_date) = 2026 GROUP BY r.region_name) SELECT r.region_name, COALESCE(f.total_revenue, 0) AS feb_revenue, COALESCE(m.total_revenue, 0) AS mar_revenue FROM revenue_feb AS f FULL OUTER JOIN revenue_mar AS m ON f.region_name = m.region_name ORDER BY region_name LIMIT 1000",
+          "passed": false,
+          "fail_reason": "Execution error: (psycopg.errors.UndefinedTable) missing FROM-clause entry for table \"r\"\nLINE 1: ...order_date) = 2026 GROUP BY r.region_name) SELECT r.region_n...\n                                                             ^\n[SQL: WITH revenue_feb AS (SELECT r.region_name, SUM(s.quantity * s.unit_price * (1 - s.discount_pct / 100)) AS total_revenue FROM sales.sales_orders AS o JOIN sales.sales_order_items AS s ON o.order_id = s.order_id JOIN sales.regions AS r ON o.region_id = r.region_id WHERE o.status = 'com...",
+          "latency_ms": 134625.2
+        }
+      ]
+    },
+    {
+      "id": "CONV-02",
+      "title": "Product Category Quarterly Drilldown",
+      "category": "temporal_filter",
+      "role": "executive",
+      "passed": true,
+      "turns": [
+        {
+          "turn_number": 1,
+          "query": "What is the total sales revenue by product category?",
+          "sql": "SELECT pc.category, SUM(soi.quantity * soi.unit_price * (1 - soi.discount_pct / 100)) AS total_revenue FROM sales.sales_order_items soi JOIN sales.product_catalog pc ON soi.product_id = pc.product_id GROUP BY pc.category ORDER BY total_revenue DESC LIMIT 5",
+          "passed": true,
+          "fail_reason": "",
+          "latency_ms": 37622.8
+        },
+        {
+          "turn_number": 2,
+          "query": "Filter that to only Q1 of 2026",
+          "sql": "SELECT pc.category, SUM(soi.quantity * soi.unit_price * (1 - soi.discount_pct / 100)) AS total_revenue FROM sales.sales_order_items soi JOIN sales.product_catalog pc ON soi.product_id = pc.product_id JOIN sales.sales_orders so ON soi.order_id = so.order_id WHERE EXTRACT(YEAR FROM so.order_date) = 2026 AND EXTRACT(MONTH FROM so.order_date) BETWEEN 1 AND 3 GROUP BY pc.category ORDER BY total_revenue DESC LIMIT 5",
+          "passed": true,
+          "fail_reason": "",
+          "latency_ms": 65349.3
+        },
+        {
+          "turn_number": 3,
+          "query": "Break it down by month within that quarter",
+          "sql": "SELECT pc.category, EXTRACT(MONTH FROM so.order_date) AS month, SUM(soi.quantity * soi.unit_price * (1 - soi.discount_pct / 100)) AS total_revenue FROM sales.sales_order_items soi JOIN sales.product_catalog pc ON soi.product_id = pc.product_id JOIN sales.sales_orders so ON soi.order_id = so.order_id WHERE EXTRACT(YEAR FROM so.order_date) = 2026 AND EXTRACT(MONTH FROM so.order_date) BETWEEN 1 AND 3 GROUP BY pc.category, month ORDER BY month, total_revenue DESC LIMIT 5",
+          "passed": true,
+          "fail_reason": "",
+          "latency_ms": 34970.4
+        }
+      ]
+    },
+    {
+      "id": "CONV-03",
+      "title": "Customer Spend & Frequency Evolution",
+      "category": "temporal_filter",
+      "role": "executive",
+      "passed": true,
+      "turns": [
+        {
+          "turn_number": 1,
+          "query": "List the top 5 customers by total order spend",
+          "sql": "SELECT c.company_name, SUM(oi.quantity * oi.unit_price * (1 - oi.discount_pct / 100)) AS total_spend FROM sales.sales_orders o JOIN sales.sales_order_items oi ON o.order_id = oi.order_id JOIN sales.customers c ON o.customer_id = c.customer_id WHERE o.status = 'completed' GROUP BY c.company_name ORDER BY total_spend DESC LIMIT 5",
+          "passed": true,
+          "fail_reason": "",
+          "latency_ms": 27887.9
+        },
+        {
+          "turn_number": 2,
+          "query": "How many orders did each of those top 5 place in 2026?",
+          "sql": "SELECT c.company_name, COUNT(o.order_id) AS order_count FROM sales.sales_orders o JOIN sales.sales_order_items oi ON o.order_id = oi.order_id JOIN sales.customers c ON o.customer_id = c.customer_id WHERE o.status = 'completed' AND EXTRACT(YEAR FROM o.order_date) = 2026 GROUP BY c.company_name ORDER BY order_count DESC LIMIT 5",
+          "passed": true,
+          "fail_reason": "",
+          "latency_ms": 63558.6
+        },
+        {
+          "turn_number": 3,
+          "query": "What was their average order value during 2026?",
+          "sql": "WITH order_revenues AS (SELECT o.order_id, SUM(oi.quantity * oi.unit_price * (1 - oi.discount_pct / 100)) AS order_revenue FROM sales.sales_orders AS o JOIN sales.sales_order_items AS oi ON o.order_id = oi.order_id WHERE o.status = 'completed' AND EXTRACT(YEAR FROM o.order_date) = 2026 GROUP BY o.order_id) SELECT AVG(order_revenue) AS avg_order_value FROM order_revenues LIMIT 1000",
+          "passed": true,
+          "fail_reason": "",
+          "latency_ms": 33254.8
+        }
+      ]
+    },
+    {
+      "id": "CONV-04",
+      "title": "Regional Monthly Trend Progression",
+      "category": "temporal_filter",
+      "role": "executive",
+      "passed": true,
+      "turns": [
+        {
+          "turn_number": 1,
+          "query": "Show monthly revenue for the North region in 2026",
+          "sql": "SELECT r.region_name, EXTRACT(MONTH FROM o.order_date) AS month, SUM(i.quantity * i.unit_price * (1 - i.discount_pct / 100)) AS monthly_revenue FROM sales.sales_orders o JOIN sales.regions r ON o.region_id = r.region_id JOIN sales.sales_order_items i ON o.order_id = i.order_id WHERE r.region_name = 'North' AND EXTRACT(YEAR FROM o.order_date) = 2026 GROUP BY r.region_name, EXTRACT(MONTH FROM o.order_date) ORDER BY month LIMIT 12",
+          "passed": true,
+          "fail_reason": "",
+          "latency_ms": 73837.5
+        },
+        {
+          "turn_number": 2,
+          "query": "Now show the same monthly trend for the South region",
+          "sql": "SELECT r.region_name, EXTRACT(MONTH FROM o.order_date) AS month, SUM(i.quantity * i.unit_price * (1 - i.discount_pct / 100)) AS monthly_revenue FROM sales.sales_orders o JOIN sales.regions r ON o.region_id = r.region_id JOIN sales.sales_order_items i ON o.order_id = i.order_id WHERE r.region_name = 'South' AND EXTRACT(YEAR FROM o.order_date) = 2026 GROUP BY r.region_name, EXTRACT(MONTH FROM o.order_date) ORDER BY month LIMIT 12",
+          "passed": true,
+          "fail_reason": "",
+          "latency_ms": 35022.8
+        },
+        {
+          "turn_number": 3,
+          "query": "Combine both regions in one table showing North vs South side by side",
+          "sql": "SELECT r.region_name, EXTRACT(MONTH FROM o.order_date) AS month, SUM(CASE WHEN r.region_name = 'North' THEN i.quantity * i.unit_price * (1 - i.discount_pct / 100) ELSE 0 END) AS north_monthly_revenue, SUM(CASE WHEN r.region_name = 'South' THEN i.quantity * i.unit_price * (1 - i.discount_pct / 100) ELSE 0 END) AS south_monthly_revenue FROM sales.sales_orders o JOIN sales.regions r ON o.region_id = r.region_id JOIN sales.sales_order_items i ON o.order_id = i.order_id WHERE EXTRACT(YEAR FROM o.order_date) = 2026 GROUP BY r.region_name, EXTRACT(MONTH FROM o.order_date) ORDER BY month LIMIT 12",
+          "passed": true,
+          "fail_reason": "",
+          "latency_ms": 39671.3
+        }
+      ]
+    },
+    {
+      "id": "CONV-05",
+      "title": "Sales Rep Order Volume Progression",
+      "category": "temporal_filter",
+      "role": "executive",
+      "passed": true,
+      "turns": [
+        {
+          "turn_number": 1,
+          "query": "Show total orders handled by each sales rep",
+          "sql": "SELECT sales_rep, COUNT(order_id) AS total_orders FROM sales.sales_orders GROUP BY sales_rep ORDER BY total_orders DESC LIMIT 5",
+          "passed": true,
+          "fail_reason": "",
+          "latency_ms": 18435.4
+        },
+        {
+          "turn_number": 2,
+          "query": "Restrict it to orders completed in Q1 2026",
+          "sql": "SELECT sales_rep, COUNT(order_id) AS total_orders FROM sales.sales_orders WHERE status = 'completed' AND order_date BETWEEN '2026-01-01' AND '2026-03-31' GROUP BY sales_rep ORDER BY total_orders DESC LIMIT 5",
+          "passed": true,
+          "fail_reason": "",
+          "latency_ms": 20547.7
+        },
+        {
+          "turn_number": 3,
+          "query": "And what was the total revenue generated by each rep in that period?",
+          "sql": "SELECT sales_rep, SUM(quantity * unit_price * (1 - discount_pct / 100)) AS total_revenue FROM sales.sales_orders JOIN sales.sales_order_items ON sales.sales_orders.order_id = sales.sales_order_items.order_id WHERE status = 'completed' AND order_date BETWEEN '2026-01-01' AND '2026-03-31' GROUP BY sales_rep ORDER BY total_revenue DESC LIMIT 5",
+          "passed": true,
+          "fail_reason": "",
+          "latency_ms": 33973.8
+        }
+      ]
+    }
+  ]
+}

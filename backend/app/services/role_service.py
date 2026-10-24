@@ -155,13 +155,20 @@ def resolve_user_context(
 def is_column_allowed(schema: str, table: str, column: str, role: str) -> bool:
     """Check if a column is accessible to the specified role."""
     restricted = RESTRICTED_COLUMNS.get(role, set())
-    # Match both qualified (schema, table, col) and unqualified (*, table, col)
+    col_low = column.lower().strip()
+    tbl_low = (table or "").lower().strip()
+
     for s, t, c in restricted:
-        if (s == "*" or s.lower() == schema.lower()) and t.lower() == table.lower() and c.lower() == column.lower():
-            return False
-        # Also check without schema
-        if t.lower() == table.lower() and c.lower() == column.lower():
-            return False
+        if c.lower() == col_low:
+            # If table is not specified or wildcard, reject immediately
+            if not tbl_low or tbl_low == "*":
+                return False
+            # If table matches target table or target table contains table prefix/alias
+            if tbl_low == t.lower() or t.lower().startswith(tbl_low):
+                return False
+            # If schema matches
+            if (s == "*" or s.lower() == schema.lower()) and tbl_low == t.lower():
+                return False
     return True
 
 

@@ -129,12 +129,16 @@ class QueryRequest(BaseModel):
     connection_id: str = "default"
     question: str = Field(..., min_length=3, max_length=2000)
     conversation_context: list[dict] = Field(default_factory=list)
+    session_id: Optional[str] = None
+    user_role: Optional[str] = Field(default="executive")
+    username: Optional[str] = None
 
 
 class QueryStatus(BaseModel):
     id: str
     status: str
     natural_language_query: str
+    user_role: Optional[str] = None
     generated_sql: Optional[str] = None
     validated_sql: Optional[str] = None
     error_message: Optional[str] = None

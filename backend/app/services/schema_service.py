@@ -23,6 +23,10 @@ class SchemaService:
     def __init__(self):
         self._cache: dict[str, SchemaResponse] = {}
 
+    def clear_cache(self) -> None:
+        """Clear all cached schemas to force fresh live reflection."""
+        self._cache.clear()
+
     def discover_schema(
         self,
         engine,
@@ -151,22 +155,37 @@ class SchemaService:
 
     def format_schema_for_llm(
         self,
-        schema: SchemaResponse,
+        schema: SchemaResponse | None = None,
         relevant_tables: list[str] | None = None,
+        role: str = "executive",
+        connection_id: str = "default",
     ) -> str:
         """Format schema information as a concise prompt context for the LLM.
 
         Args:
-            schema: The discovered schema.
+            schema: The discovered schema (auto-fetched if None).
             relevant_tables: If provided, only include these tables.
+            role: The user's resolved security role for column & table access filtering.
+            connection_id: Target connection ID if schema is fetched.
 
         Returns:
             A formatted string suitable for the LLM prompt.
         """
+        if schema is None:
+            from app.database import get_default_target_engine
+            engine = get_default_target_engine()
+            schema = self.discover_schema(engine, connection_id=connection_id, schema_name="sales")
+
+        from app.services.role_service import is_table_allowed, is_column_allowed
+
         lines = ["DATABASE SCHEMA:", ""]
 
         for table in schema.tables:
             full_name = f"{table.schema_name}.{table.table_name}"
+
+            # Filter prohibited tables for this role
+            if not is_table_allowed(table.schema_name, table.table_name, role):
+                continue
 
             # Filter to relevant tables if specified
             if relevant_tables and full_name not in relevant_tables and table.table_name not in relevant_tables:
@@ -176,6 +195,10 @@ class SchemaService:
             lines.append(f"TABLE {full_name}{desc}")
 
             for col in table.columns:
+                # Filter restricted columns for this role (e.g. cost_price, phone, email)
+                if not is_column_allowed(table.schema_name, table.table_name, col.name, role):
+                    continue
+
                 markers = []
                 if col.is_primary_key:
                     markers.append("PK")

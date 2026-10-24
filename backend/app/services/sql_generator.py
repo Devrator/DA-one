@@ -27,19 +27,23 @@ SYSTEM_PROMPT = """You are a precise SQL analyst. Your job is to translate natur
 RULES:
 1. Generate ONLY valid PostgreSQL SELECT queries.
 2. NEVER generate INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE, or any data-modifying statement.
-3. Use only the tables and columns provided in the schema context.
-4. Do NOT invent tables, columns, or relationships that don't exist in the schema.
-5. Use proper JOINs based on the foreign key relationships provided.
-6. Use appropriate aggregations (SUM, COUNT, AVG, etc.) as needed.
-7. Always qualify column names with the EXACT table alias of the table that actually defines that column in the schema. For example, 'sales_rep' belongs to 'sales.sales_orders', NOT 'sales.sales_order_items'. Never attribute a column to the wrong joined table.
-8. For revenue calculations: revenue = quantity * unit_price * (1 - discount_pct / 100). Do NOT join sales.returns or subtract refunds unless the question explicitly asks for net revenue or return refunds.
-9. In PostgreSQL, string comparisons are case-sensitive and database values are lowercase. Always use lowercase for status values (e.g. 'completed', 'cancelled', 'pending', 'returned') or use LOWER(status) = 'completed'. NEVER use uppercase 'Completed' or 'Cancelled'.
-10. For average order value: calculate total revenue per order first in a subquery or CTE (grouping by order_id), then calculate the AVG() of those order totals.
-11. For date filtering, use the date columns available in the schema (e.g. EXTRACT(YEAR FROM order_date) = 2026).
-12. Return results ordered meaningfully (by date, by value descending, etc.).
-13. Add a LIMIT clause for result sets that could be large. When ranking the top items without an explicit number, use LIMIT 5.
-14. If the question cannot be answered with the available schema, respond with a JSON object containing "error" and "clarification_needed".
+3. Use ONLY the tables and columns provided in the schema context. Never invent tables or columns. If a table or column has been renamed in the schema context (e.g. 'sales.products' or 'discount_rate'), you MUST use the new table and column name shown in the schema context.
+4. Always qualify column names with the EXACT table alias of the table that actually defines that column in the schema. Specifically:
+   - 'sales_rep', 'order_date', 'status', 'region_id', 'customer_id' belong to 'sales.sales_orders'. (There is NO 'total_amount' or 'product_id' column on sales_orders).
+   - 'quantity', 'unit_price', 'product_id' belong to 'sales.sales_order_items' (along with the active discount column, e.g. 'discount_pct' or 'discount_rate').
+   - 'company_name', 'contact_name', 'segment' belong to 'sales.customers'. (There is NO 'customer_name' or 'customer_segment' column; use company_name and segment).
+   - 'product_name', 'category' belong to the active products table ('sales.product_catalog' or 'sales.products' as defined in the schema).
 
+5. For revenue calculations: revenue = quantity * unit_price * (1 - active_discount / 100) using whichever discount column is defined in the schema (e.g. discount_pct or discount_rate). Do NOT join sales.returns or subtract refunds unless the question explicitly asks for net revenue or return refunds.
+6. In PostgreSQL, string comparisons are case-sensitive and database values are lowercase. Always use lowercase for status values (e.g. 'completed', 'cancelled', 'pending', 'returned') or use LOWER(status) = 'completed'. NEVER use uppercase 'Completed' or 'Cancelled'.
+7. For average order value (AOV): calculate total revenue per order in a subquery or CTE (grouping by order_id: SUM(quantity * unit_price * (1 - discount_pct/100))), then take the AVG() of those order totals. Do NOT take the average of individual item rows.
+8. For monthly revenue by region: GROUP BY r.region_name, EXTRACT(MONTH FROM o.order_date) (or region_id, month).
+9. For regional targets vs actual sales: compute actuals in a CTE grouped by region_id, compute targets in a CTE grouped by region_id, and outer join with sales.regions on region_id using COALESCE(target, 0) and COALESCE(actual_sales, 0).
+10. For return rate by product category: total items = COUNT(i.item_id) in that category; returns = COUNT(r.return_id) matching items in that category; return_rate_pct = ROUND(COALESCE(returns, 0)::numeric / total_items * 100, 2).
+11. MULTI-TURN CONVERSATIONS: When answering a follow-up question (e.g. "Now only for 2026", "Compare it with 2025", "What about in the South region?"), preserve the metric, dimensions, and joins from the prior turn while updating the requested filter, grouping, or comparison.
+12. AMBIGUITY & CLARIFICATION: If the question is ambiguous, lacks critical context (e.g. "What about the other one?", "Show me more details" with multiple possible interpretations), or asks for undefined business terms, respond with needs_clarification: true and a specific clarification_question.
+13. If the question cannot be answered with the available schema or asks for restricted data not present in the schema, respond with needs_clarification: true and explain the limitation.
+14. Add a LIMIT clause for result sets that could be large. When ranking the top items without an explicit number, use LIMIT 5.
 
 RESPONSE FORMAT:
 Respond with a JSON object with these fields:
@@ -91,6 +95,7 @@ class SQLGenerator:
         question: str,
         schema_context: str,
         conversation_context: list[dict] | None = None,
+        role: str = "executive",
     ) -> GenerationResult:
         """Generate and validate SQL for a natural language question.
 
@@ -98,6 +103,7 @@ class SQLGenerator:
             question: The user's natural language question.
             schema_context: Formatted schema information.
             conversation_context: Prior conversation for follow-ups.
+            role: The active user role for column and table permission enforcement.
 
         Returns:
             GenerationResult with the generated SQL or error/clarification.
@@ -105,7 +111,7 @@ class SQLGenerator:
         start_time = time.time()
 
         # Build the user prompt
-        user_prompt = self._build_prompt(question, schema_context, conversation_context)
+        user_prompt = self._build_prompt(question, schema_context, conversation_context, role=role)
 
         # Generate SQL
         llm_response = self.llm.generate(
@@ -155,8 +161,8 @@ class SQLGenerator:
                 generation_time_ms=(time.time() - start_time) * 1000,
             )
 
-        # Validate SQL through policy engine
-        policy_result = self.policy.validate(sql)
+        # Validate SQL through policy engine with active role
+        policy_result = self.policy.validate(sql, role=role)
 
         # If validation fails, attempt bounded repair
         repair_attempts = 0
@@ -177,7 +183,7 @@ class SQLGenerator:
 
             if repair_result and repair_result.get("sql"):
                 sql = repair_result["sql"]
-                policy_result = self.policy.validate(sql)
+                policy_result = self.policy.validate(sql, role=role)
                 parsed.update(repair_result)
             else:
                 break
@@ -210,19 +216,28 @@ class SQLGenerator:
         question: str,
         schema_context: str,
         conversation_context: list[dict] | None = None,
+        role: str = "executive",
     ) -> str:
         """Build the user prompt for SQL generation."""
-        parts = [schema_context, "", f"USER QUESTION: {question}"]
+        parts = [schema_context, ""]
 
         if conversation_context:
-            parts.insert(0, "CONVERSATION CONTEXT:")
-            for ctx in conversation_context[-3:]:  # Last 3 exchanges max
-                parts.insert(1, f"  Q: {ctx.get('question', '')}")
-                parts.insert(2, f"  SQL: {ctx.get('sql', 'N/A')}")
-            parts.insert(len(conversation_context[-3:]) + 1, "")
+            conv_lines = ["PRIOR CONVERSATION TURNS (Use these to understand follow-ups, filters, and metrics):"]
+            for i, ctx in enumerate(conversation_context[-3:], 1):
+                conv_lines.append(f"  Turn {i} Question: {ctx.get('question', '')}")
+                if ctx.get('sql'):
+                    conv_lines.append(f"  Turn {i} Executed SQL: {ctx.get('sql')}")
+                if ctx.get('active_filters'):
+                    conv_lines.append(f"  Turn {i} Active Filters: {ctx.get('active_filters')}")
+            parts.append("\n".join(conv_lines))
+            parts.append("")
 
+        parts.append(f"USER ROLE: {role.upper()}")
+        parts.append(f"USER QUESTION: {question}")
         parts.append("")
         parts.append("Generate the SQL query as a JSON response.")
+
+        return "\n".join(parts)
 
         return "\n".join(parts)
 
@@ -300,13 +315,14 @@ Respond with a JSON object containing "sql", "explanation", "tables_used", and "
         original_sql: str,
         db_error: str,
         schema_context: str,
+        role: str = "executive",
     ) -> GenerationResult:
         """Attempt to repair SQL that caused a database execution error."""
         start_time = time.time()
         repair_prompt = f"""{schema_context}
 
 The following SQL query was generated for the question: "{question}"
-but failed during execution on PostgreSQL with this error:
+under role {role.upper()} but failed during execution on PostgreSQL with this error:
 
 GENERATED SQL:
 {original_sql}
@@ -344,7 +360,7 @@ Respond with a JSON object containing "sql", "explanation", "tables_used", and "
             )
 
         repaired_sql = parsed["sql"]
-        policy_res = self.policy.validate(repaired_sql)
+        policy_res = self.policy.validate(repaired_sql, role=role)
         if not policy_res.allowed:
             return GenerationResult(
                 success=False,

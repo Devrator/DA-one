@@ -54,6 +54,8 @@ class QueryRecord(Base):
     id = Column(String(36), primary_key=True, default=new_uuid)
     connection_id = Column(String(36), ForeignKey("connections.id"), nullable=True)
     user_id = Column(String(200), nullable=False, default="demo")
+    user_role = Column(String(50), nullable=True, default="executive")
+    session_id = Column(String(100), nullable=True)
     natural_language_query = Column(Text, nullable=False)
     generated_sql = Column(Text, nullable=True)
     validated_sql = Column(Text, nullable=True)
@@ -179,3 +181,26 @@ class BusinessGlossary(Base):
     category = Column(String(100), nullable=True)  # metric, dimension, filter, etc.
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class ConversationSession(Base):
+    """Multi-turn conversation session tracking semantic state."""
+    __tablename__ = "conversation_sessions"
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    user_id = Column(String(200), nullable=False, default="demo")
+    user_role = Column(String(50), nullable=False, default="executive")
+    title = Column(String(200), nullable=True)
+    turns = Column(JSON, default=list)  # list of {turn_number, question, sql, result_summary, active_filters, metric}
+    active_metric = Column(String(100), nullable=True)
+    active_grouping = Column(String(100), nullable=True)
+    active_filters = Column(JSON, default=dict)
+    last_sql = Column(Text, nullable=True)
+    turn_count = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    __table_args__ = (
+        Index("idx_conversation_user", "user_id"),
+        Index("idx_conversation_updated", "updated_at"),
+    )

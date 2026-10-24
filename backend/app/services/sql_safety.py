@@ -99,7 +99,7 @@ class SQLPolicyEngine:
             max_query_length=settings.sql_max_query_length,
         )
 
-    def validate(self, sql: str) -> PolicyResult:
+    def validate(self, sql: str, role: str = "executive") -> PolicyResult:
         """Validate SQL against all security policies.
 
         Args:

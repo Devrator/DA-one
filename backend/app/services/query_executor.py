@@ -53,27 +53,32 @@ class QueryExecutor:
 
     def execute(
         self,
-        engine: Engine,
-        sql: str,
+        engine_or_sql: Any = None,
+        sql: str | None = None,
         max_rows: int | None = None,
         user_context: Any = None,
     ) -> ExecutionResult:
         """Execute a validated SQL query against the target database.
 
-        Args:
-            engine: SQLAlchemy engine with restricted permissions.
-            sql: Pre-validated SQL query.
-            max_rows: Override the default row limit.
-            user_context: Optional UserSecurityContext for database-level RLS.
-
-        Returns:
-            ExecutionResult with the query results or error.
+        Supports both execute(engine, sql, ...) and execute(sql, ...).
         """
+        if isinstance(engine_or_sql, str):
+            actual_sql = engine_or_sql
+            from app.database import get_default_target_engine
+            actual_engine = get_default_target_engine()
+        else:
+            actual_engine = engine_or_sql
+            actual_sql = sql or ""
+            if actual_engine is None:
+                from app.database import get_default_target_engine
+                actual_engine = get_default_target_engine()
+
         effective_max_rows = max_rows or self.max_rows
         start_time = time.time()
 
         try:
-            with engine.connect() as conn:
+            with actual_engine.connect() as conn:
+
                 # Execute within a transaction that we'll always rollback
                 # (defense-in-depth: even if policy was bypassed, read-only + rollback)
                 with conn.begin():
@@ -99,8 +104,9 @@ class QueryExecutor:
                         else:
                             conn.execute(text("SET LOCAL app.sales_rep = ''"))
 
-                    result = conn.execute(text(sql))
+                    result = conn.execute(text(actual_sql))
                     columns = list(result.keys()) if result.returns_rows else []
+
 
                     if not result.returns_rows:
                         elapsed = (time.time() - start_time) * 1000

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Sparkles, Database, Play, BarChart3, ShieldCheck, Clock, CheckCircle2, 
   Terminal, Layers, History, Activity, AlertCircle, ChevronRight, FileSpreadsheet, 
-  RefreshCw, Cpu, Server, Compass
+  RefreshCw, Cpu, Server, Compass, Shield, MessageSquare, RefreshCw as LoopIcon
 } from 'lucide-react';
 import ChartWidget from './components/ChartWidget';
 import DataTable from './components/DataTable';
@@ -10,6 +10,11 @@ import SqlViewer from './components/SqlViewer';
 import SchemaBrowser from './components/SchemaBrowser';
 import BenchmarkRunner from './components/BenchmarkRunner';
 import AuditLog from './components/AuditLog';
+import RoleSelector from './components/RoleSelector';
+import ConversationPanel from './components/ConversationPanel';
+import SecurityEvaluationView from './components/SecurityEvaluationView';
+import ConversationsEvaluationView from './components/ConversationsEvaluationView';
+import SchemaRecoveryView from './components/SchemaRecoveryView';
 
 const SAMPLE_PROMPTS = [
   "Show total sales by region",
@@ -31,8 +36,15 @@ export default function App() {
   const [systemReadiness, setSystemReadiness] = useState(null);
   const [queryHistory, setQueryHistory] = useState([]);
   const [schemaSearch, setSchemaSearch] = useState('');
+  
+  // Phase 2 State: Server-Verified Roles & Multi-Turn Sessions
+  const [currentRole, setCurrentRole] = useState('executive');
+  const [currentSessionId, setCurrentSessionId] = useState(`sess_${Date.now().toString(36)}`);
+  const [conversationTurns, setConversationTurns] = useState([]);
+  const [activeContext, setActiveContext] = useState({ metric: 'Revenue', grouping: 'All Regions' });
 
   const textareaRef = useRef(null);
+
 
   // Load readiness & schema on mount
   useEffect(() => {
@@ -101,10 +113,15 @@ export default function App() {
     try {
       const res = await fetch('/api/v1/queries', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-User-Role': currentRole,
+        },
         body: JSON.stringify({
           question: q,
-          connection_id: 'default'
+          connection_id: 'default',
+          user_role: currentRole,
+          session_id: currentSessionId,
         })
       });
 
@@ -119,6 +136,28 @@ export default function App() {
 
       const data = await res.json();
       setQueryResult(data);
+      
+      // Update multi-turn session timeline
+      setConversationTurns(prev => [
+        ...prev,
+        {
+          id: data.query_id || `turn_${Date.now()}`,
+          question: q,
+          sql: data.generated_sql,
+          status: data.status,
+          result_row_count: data.result_row_count,
+          execution_time_ms: data.execution_time_ms,
+          clarification_message: data.status === 'clarification_needed' ? (data.clarification_question || data.error) : null,
+        }
+      ]);
+
+      // Detect metric or grouping tags
+      if (q.toLowerCase().includes('2023')) setActiveContext(p => ({ ...p, filter: '2023' }));
+      else if (q.toLowerCase().includes('2022')) setActiveContext(p => ({ ...p, filter: '2022' }));
+      if (q.toLowerCase().includes('region')) setActiveContext(p => ({ ...p, grouping: 'By Region' }));
+      else if (q.toLowerCase().includes('category')) setActiveContext(p => ({ ...p, grouping: 'By Category' }));
+      else if (q.toLowerCase().includes('customer')) setActiveContext(p => ({ ...p, grouping: 'By Customer' }));
+
       fetchRecentQueries();
     } catch (err) {
       console.error('Query execution error:', err);
@@ -128,6 +167,15 @@ export default function App() {
       setCurrentStep('');
     }
   };
+
+  const handleNewSession = () => {
+    setCurrentSessionId(`sess_${Date.now().toString(36)}`);
+    setConversationTurns([]);
+    setQueryResult(null);
+    setQuestion('');
+    setActiveContext({ metric: 'Revenue', grouping: 'All Regions' });
+  };
+
 
   const handleKeyDown = (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -180,16 +228,38 @@ export default function App() {
             Benchmark (31 Cases)
           </button>
           <button
+            className={`nav-tab-btn ${activeTab === 'security' ? 'active' : ''}`}
+            onClick={() => setActiveTab('security')}
+          >
+            <Shield size={15} />
+            35 Security Attacks
+          </button>
+          <button
+            className={`nav-tab-btn ${activeTab === 'conversations' ? 'active' : ''}`}
+            onClick={() => setActiveTab('conversations')}
+          >
+            <MessageSquare size={15} />
+            50 Conversations
+          </button>
+          <button
+            className={`nav-tab-btn ${activeTab === 'schema_recovery' ? 'active' : ''}`}
+            onClick={() => setActiveTab('schema_recovery')}
+          >
+            <RefreshCw size={15} />
+            Schema Recovery
+          </button>
+          <button
             className={`nav-tab-btn ${activeTab === 'audit' ? 'active' : ''}`}
             onClick={() => setActiveTab('audit')}
           >
             <ShieldCheck size={15} />
-            Security Audit
+            Audit Log
           </button>
         </nav>
 
-        {/* System Readiness Chips */}
+        {/* System Readiness Chips & Role Switcher */}
         <div className="header-status">
+          <RoleSelector currentRole={currentRole} onRoleChange={setCurrentRole} />
           <div className="status-chip" title="PostgreSQL 16 connection status">
             <div className={`pulse-dot ${systemReadiness?.database?.status === 'healthy' ? '' : 'warning'}`} />
             <span>PostgreSQL: 5433</span>
@@ -200,6 +270,7 @@ export default function App() {
           </div>
         </div>
       </header>
+
 
       {/* Main Layout Area */}
       <div className="main-layout">
@@ -280,8 +351,18 @@ export default function App() {
 
             {/* Center Content Workspace */}
             <main className="workspace-content">
+              {/* Multi-Turn Conversation History & Context Carryover */}
+              <ConversationPanel
+                currentSessionId={currentSessionId}
+                turns={conversationTurns}
+                onNewSession={handleNewSession}
+                userRole={currentRole}
+                activeContext={activeContext}
+              />
+
               {/* Natural Language Prompt Card */}
               <div className="prompt-card">
+
                 <textarea
                   ref={textareaRef}
                   className="prompt-textarea"
@@ -467,12 +548,34 @@ export default function App() {
           </main>
         )}
 
+        {/* 35-Case Adversarial Security Suite */}
+        {activeTab === 'security' && (
+          <main className="workspace-content">
+            <SecurityEvaluationView />
+          </main>
+        )}
+
+        {/* 50-Scenario Multi-Turn Conversations */}
+        {activeTab === 'conversations' && (
+          <main className="workspace-content">
+            <ConversationsEvaluationView />
+          </main>
+        )}
+
+        {/* Dynamic Schema Drift Recovery */}
+        {activeTab === 'schema_recovery' && (
+          <main className="workspace-content">
+            <SchemaRecoveryView />
+          </main>
+        )}
+
         {/* Audit Log Tab */}
         {activeTab === 'audit' && (
           <main className="workspace-content">
             <AuditLog />
           </main>
         )}
+
       </div>
     </div>
   );

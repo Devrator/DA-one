@@ -26,7 +26,7 @@ from app.database import (
 )
 from app.models import (
     Connection, QueryRecord, EvaluationRun, EvaluationResult,
-    AuditEvent, BusinessGlossary,
+    AuditEvent, BusinessGlossary, ConversationSession,
 )
 from app.schemas import (
     HealthResponse, ReadinessResponse,
@@ -44,6 +44,7 @@ from app.services.sql_safety import SQLPolicyEngine
 from app.services.query_executor import QueryExecutor, ExecutionResult
 from app.services.chart_service import select_chart_type
 from app.services.explanation_service import ExplanationService
+from app.services.role_service import resolve_user_context, UserSecurityContext
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -312,17 +313,46 @@ async def get_connection_schema(conn_id: str, db: Session = Depends(get_app_db))
 # ============================================================================
 
 @app.post("/api/v1/queries", response_model=QueryStatus, tags=["Queries"])
-async def submit_query(req: QueryRequest, db: Session = Depends(get_app_db)):
+async def submit_query(req: QueryRequest, request: Request, db: Session = Depends(get_app_db)):
     """Submit a natural language query for execution.
 
-    Orchestrates the full pipeline:
-    Planning → SQL Generation → Validation → Execution → Verification → Explanation
+    Orchestrates the full pipeline with Role Security & RLS:
+    Identity Resolution → Schema Pruning → SQL Generation → AST Policy → Database RLS Execution → Verification → Grounded Explanation
     """
     start_time = time.time()
+
+    # Resolve user security context on the server (do not trust arbitrary browser roles)
+    role_header = request.headers.get("X-User-Role") or req.user_role or "executive"
+    user_header = request.headers.get("X-Username") or req.username
+    user_ctx = resolve_user_context(role_or_username=user_header or role_header, explicit_role=role_header)
+
+    # Multi-turn conversation session tracking
+    conv_session = None
+    conversation_turns = req.conversation_context or []
+    if req.session_id:
+        conv_session = db.query(ConversationSession).filter(ConversationSession.id == req.session_id).first()
+        if not conv_session:
+            conv_session = ConversationSession(
+                id=req.session_id,
+                user_id=user_ctx.user_id,
+                user_role=user_ctx.role,
+                title=req.question[:60],
+                turns=[],
+            )
+            db.add(conv_session)
+            db.commit()
+        elif not conversation_turns and conv_session.turns:
+            conversation_turns = [
+                {"question": t["question"], "sql": t.get("sql"), "active_filters": t.get("active_filters")}
+                for t in conv_session.turns[-3:]
+            ]
 
     # Create query record
     record = QueryRecord(
         connection_id=req.connection_id if req.connection_id != "default" else None,
+        user_id=user_ctx.user_id,
+        user_role=user_ctx.role,
+        session_id=req.session_id,
         natural_language_query=req.question,
         status="planning",
         model_name=get_settings().llm_model,
@@ -352,12 +382,12 @@ async def submit_query(req: QueryRequest, db: Session = Depends(get_app_db)):
             )
             schema_name = conn.schema_name or "public"
 
-        # 2. Discover schema
+        # 2. Discover schema & prune restricted tables/columns for this role
         schema_svc = get_schema_service()
         schema = schema_svc.discover_schema(engine, req.connection_id, schema_name)
-        schema_context = schema_svc.format_schema_for_llm(schema)
+        schema_context = schema_svc.format_schema_for_llm(schema, role=user_ctx.role)
 
-        # 3. Generate SQL
+        # 3. Generate SQL with role-based AST policy validation
         record.status = "generating"
         db.commit()
 
@@ -365,7 +395,8 @@ async def submit_query(req: QueryRequest, db: Session = Depends(get_app_db)):
         gen_result = generator.generate(
             question=req.question,
             schema_context=schema_context,
-            conversation_context=req.conversation_context or None,
+            conversation_context=conversation_turns or None,
+            role=user_ctx.role,
         )
 
         record.model_name = gen_result.model_name
@@ -389,6 +420,7 @@ async def submit_query(req: QueryRequest, db: Session = Depends(get_app_db)):
             db.refresh(record)
             _audit(db, "query.rejected", "query", record.id, {
                 "question": req.question,
+                "user_role": user_ctx.role,
                 "reason": gen_result.error,
             })
             return QueryStatus.model_validate(record)
@@ -401,17 +433,17 @@ async def submit_query(req: QueryRequest, db: Session = Depends(get_app_db)):
             "repair_attempts": gen_result.repair_attempts,
         }
 
-        # 4. Execute query
+        # 4. Execute query under PostgreSQL database-level RLS
         record.status = "executing"
         db.commit()
 
         executor = get_query_executor()
-        exec_result = executor.execute(engine, gen_result.sql)
+        exec_result = executor.execute(engine, gen_result.sql, user_context=user_ctx)
 
         record.execution_time_ms = exec_result.execution_time_ms
 
         if not exec_result.success:
-            # Execution failed — bounded repair with database error context
+            # Execution failed — bounded repair with database error context and role enforcement
             if gen_result.repair_attempts < 2 and "timeout" not in str(exec_result.error or "").lower():
                 record.status = "generating"
                 db.commit()
@@ -421,16 +453,16 @@ async def submit_query(req: QueryRequest, db: Session = Depends(get_app_db)):
                     original_sql=gen_result.sql,
                     db_error=str(exec_result.error),
                     schema_context=schema_context,
+                    role=user_ctx.role,
                 )
                 if repair_gen.success and repair_gen.sql:
-                    rep_exec = executor.execute(engine, repair_gen.sql)
+                    rep_exec = executor.execute(engine, repair_gen.sql, user_context=user_ctx)
                     if rep_exec.success:
                         exec_result = rep_exec
                         gen_result.sql = repair_gen.sql
                         record.generated_sql = repair_gen.sql
                         record.validated_sql = repair_gen.sql
                         record.execution_time_ms = rep_exec.execution_time_ms
-
 
             if not exec_result.success:
                 record.status = "failed"
@@ -439,6 +471,11 @@ async def submit_query(req: QueryRequest, db: Session = Depends(get_app_db)):
                 record.total_time_ms = (time.time() - start_time) * 1000
                 db.commit()
                 db.refresh(record)
+                _audit(db, "query.failed", "query", record.id, {
+                    "question": req.question,
+                    "user_role": user_ctx.role,
+                    "error": str(exec_result.error),
+                })
                 return QueryStatus.model_validate(record)
 
         # 5. Verify and store results
@@ -459,8 +496,7 @@ async def submit_query(req: QueryRequest, db: Session = Depends(get_app_db)):
         record.chart_spec = chart_spec
         db.commit()
 
-
-        # 7. Generate explanation
+        # 7. Generate explanation with prompt injection safeguards
         explanation_svc = get_explanation_service()
         explanation = explanation_svc.generate_explanation(
             question=req.question,
@@ -479,8 +515,26 @@ async def submit_query(req: QueryRequest, db: Session = Depends(get_app_db)):
         db.commit()
         db.refresh(record)
 
-        # Audit
+        # Update conversation session turn state if session active
+        if conv_session:
+            new_turn = {
+                "turn": (conv_session.turn_count or 0) + 1,
+                "question": req.question,
+                "sql": gen_result.sql,
+                "row_count": exec_result.row_count,
+                "explanation": explanation[:250] if explanation else "",
+            }
+            updated_turns = list(conv_session.turns or [])
+            updated_turns.append(new_turn)
+            conv_session.turns = updated_turns
+            conv_session.last_sql = gen_result.sql
+            conv_session.turn_count = len(updated_turns)
+            db.commit()
+
+        # Audit with full security metadata
         _audit(db, "query.completed", "query", record.id, {
+            "user_role": user_ctx.role,
+            "user_id": user_ctx.user_id,
             "execution_time_ms": record.execution_time_ms,
             "row_count": record.result_row_count,
         })
@@ -688,9 +742,233 @@ async def get_stats(db: Session = Depends(get_app_db)):
     }
 
 
+
 # ============================================================================
-# AUDIT ENDPOINT
+# PHASE 2: ROLES & PERMISSION MATRIX
 # ============================================================================
+
+@app.get("/api/v1/roles", tags=["Security Roles"])
+async def get_roles_and_permissions():
+    """Retrieve verified roles, assigned personas, and permission matrix."""
+    from app.services.role_service import VERIFIED_USERS, RESTRICTED_COLUMNS, PROHIBITED_TABLES_BY_ROLE
+    
+    matrix = {
+        "roles": [
+            {
+                "role": "executive",
+                "title": "Executive / Admin",
+                "row_scope": "Organization-wide unrestricted analytical access",
+                "restricted_columns": [],
+                "prohibited_tables": [],
+            },
+            {
+                "role": "regional_manager",
+                "title": "Regional Manager",
+                "row_scope": "Restricted to assigned region (e.g. Region 1 North, Region 2 South) via PostgreSQL RLS",
+                "restricted_columns": [f"{s}.{t}.{c}" for s, t, c in RESTRICTED_COLUMNS["regional_manager"]],
+                "prohibited_tables": [f"{s}.{t}" for s, t in PROHIBITED_TABLES_BY_ROLE["regional_manager"]],
+            },
+            {
+                "role": "sales_rep",
+                "title": "Sales Representative",
+                "row_scope": "Restricted to assigned sales rep orders (e.g. Carol Chen) via PostgreSQL RLS",
+                "restricted_columns": [f"{s}.{t}.{c}" for s, t, c in RESTRICTED_COLUMNS["sales_rep"]],
+                "prohibited_tables": [f"{s}.{t}" for s, t in PROHIBITED_TABLES_BY_ROLE["sales_rep"]],
+            },
+        ],
+        "verified_personas": [
+            {
+                "username": u.username,
+                "role": u.role,
+                "region_id": u.region_id,
+                "sales_rep": u.sales_rep,
+                "description": u.description,
+            }
+            for u in VERIFIED_USERS.values()
+        ],
+    }
+    return matrix
+
+
+# ============================================================================
+# PHASE 2: CONVERSATION SESSIONS (MULTI-TURN)
+# ============================================================================
+
+@app.get("/api/v1/conversations", tags=["Conversations"])
+async def list_conversations(limit: int = 20, db: Session = Depends(get_app_db)):
+    """List recent conversation sessions."""
+    sessions = db.query(ConversationSession).order_by(ConversationSession.updated_at.desc()).limit(limit).all()
+    return [
+        {
+            "id": s.id,
+            "title": s.title,
+            "user_role": s.user_role,
+            "turn_count": s.turn_count,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+            "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+        }
+        for s in sessions
+    ]
+
+
+@app.post("/api/v1/conversations", tags=["Conversations"])
+async def create_conversation(
+    title: str = Query("New Analysis Session"),
+    user_role: str = Query("executive"),
+    db: Session = Depends(get_app_db),
+):
+    """Create a new multi-turn conversation session."""
+    session_id = f"sess_{uuid.uuid4().hex[:12]}"
+    session = ConversationSession(
+        id=session_id,
+        user_role=user_role,
+        title=title,
+        turn_count=0,
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return {
+        "id": session.id,
+        "title": session.title,
+        "user_role": session.user_role,
+        "turn_count": session.turn_count,
+        "created_at": session.created_at.isoformat(),
+    }
+
+
+@app.get("/api/v1/conversations/{session_id}", tags=["Conversations"])
+async def get_conversation_turns(session_id: str, db: Session = Depends(get_app_db)):
+    """Retrieve full turn history and metadata for a session."""
+    session = db.query(ConversationSession).filter(ConversationSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Conversation session not found")
+
+    records = db.query(QueryRecord).filter(
+        QueryRecord.session_id == session_id
+    ).order_by(QueryRecord.created_at.asc()).all()
+
+    return {
+        "id": session.id,
+        "title": session.title,
+        "user_role": session.user_role,
+        "turn_count": session.turn_count,
+        "turns": [
+            {
+                "id": r.id,
+                "question": r.natural_language_query,
+                "sql": r.generated_sql,
+                "status": r.status,
+                "execution_time_ms": r.execution_time_ms,
+                "result_row_count": r.result_row_count,
+                "columns": [c["name"] for c in r.result_columns] if r.result_columns else [],
+                "rows": r.result_rows[:10] if r.result_rows else [],
+                "explanation": r.explanation,
+                "chart_config": r.chart_config,
+                "clarification_message": r.error_message if r.status == "clarification_needed" else None,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in records
+        ],
+    }
+
+
+# ============================================================================
+# PHASE 2: EVALUATION DASHBOARDS (SECURITY, 50-CONVERSATION, SCHEMA RECOVERY)
+# ============================================================================
+
+@app.post("/api/v1/evaluations/security/runs", tags=["Evaluations"])
+async def run_security_eval(background_tasks: BackgroundTasks):
+    """Trigger adversarial security evaluation suite (35 cases)."""
+    import threading
+    from app.services.security_evaluator import SecurityEvaluator
+    import json
+    from pathlib import Path
+
+    def _execute():
+        evaluator = SecurityEvaluator()
+        res = evaluator.run_suite()
+        out_p = Path(__file__).resolve().parent.parent / "data" / "security_attack_results.json"
+        with open(out_p, "w", encoding="utf-8") as f:
+            json.dump(res, f, indent=2)
+
+    threading.Thread(target=_execute, daemon=True).start()
+    return {"status": "started", "message": "Adversarial security evaluation suite is running."}
+
+
+@app.get("/api/v1/evaluations/security/latest", tags=["Evaluations"])
+async def get_latest_security_eval():
+    """Retrieve latest adversarial security evaluation results."""
+    import json
+    from pathlib import Path
+    out_p = Path(__file__).resolve().parent.parent / "data" / "security_attack_results.json"
+    if not out_p.exists():
+        raise HTTPException(status_code=404, detail="No security evaluation results found")
+    with open(out_p, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+@app.post("/api/v1/evaluations/conversations/runs", tags=["Evaluations"])
+async def run_conversations_eval():
+    """Trigger 50-scenario multi-turn conversation evaluation."""
+    import threading
+    from app.services.conversation_evaluator import ConversationEvaluator
+    import json
+    from pathlib import Path
+
+    def _execute():
+        evaluator = ConversationEvaluator()
+        res = evaluator.run_suite()
+        out_p = Path(__file__).resolve().parent.parent / "data" / "conversations_benchmark_results.json"
+        with open(out_p, "w", encoding="utf-8") as f:
+            json.dump(res, f, indent=2)
+
+    threading.Thread(target=_execute, daemon=True).start()
+    return {"status": "started", "message": "50-conversation benchmark suite is running."}
+
+
+@app.get("/api/v1/evaluations/conversations/latest", tags=["Evaluations"])
+async def get_latest_conversations_eval():
+    """Retrieve latest 50-scenario multi-turn conversation benchmark results."""
+    import json
+    from pathlib import Path
+    out_p = Path(__file__).resolve().parent.parent / "data" / "conversations_benchmark_results.json"
+    if not out_p.exists():
+        raise HTTPException(status_code=404, detail="No conversation evaluation results found")
+    with open(out_p, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+@app.post("/api/v1/schema-recovery/runs", tags=["Schema Recovery"])
+async def run_schema_recovery():
+    """Trigger live schema migration recovery evaluation."""
+    import threading
+    from app.services.schema_recovery import SchemaRecoveryEngine
+    import json
+    from pathlib import Path
+
+    def _execute():
+        engine = SchemaRecoveryEngine()
+        res = engine.run_recovery_evaluation()
+        out_p = Path(__file__).resolve().parent.parent / "data" / "schema_recovery_results.json"
+        with open(out_p, "w", encoding="utf-8") as f:
+            json.dump(res, f, indent=2)
+
+    threading.Thread(target=_execute, daemon=True).start()
+    return {"status": "started", "message": "Schema migration recovery evaluation is running."}
+
+
+@app.get("/api/v1/schema-recovery/latest", tags=["Schema Recovery"])
+async def get_latest_schema_recovery():
+    """Retrieve latest schema recovery results."""
+    import json
+    from pathlib import Path
+    out_p = Path(__file__).resolve().parent.parent / "data" / "schema_recovery_results.json"
+    if not out_p.exists():
+        raise HTTPException(status_code=404, detail="No schema recovery results found")
+    with open(out_p, "r", encoding="utf-8") as f:
+        return json.load(f)
+
 
 @app.get("/api/v1/audit", tags=["Audit"])
 async def get_audit_trail(limit: int = 50, db: Session = Depends(get_app_db)):
@@ -713,6 +991,7 @@ async def get_audit_trail(limit: int = 50, db: Session = Depends(get_app_db)):
 # ============================================================================
 # HELPERS
 # ============================================================================
+
 
 def _audit(db: Session, event_type: str, resource_type: str, resource_id: str, details: dict):
     """Record an audit event."""
