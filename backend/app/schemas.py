@@ -126,7 +126,7 @@ class SchemaResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class QueryRequest(BaseModel):
-    connection_id: str
+    connection_id: str = "default"
     question: str = Field(..., min_length=3, max_length=2000)
     conversation_context: list[dict] = Field(default_factory=list)
 

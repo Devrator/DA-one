@@ -387,6 +387,10 @@ async def submit_query(req: QueryRequest, db: Session = Depends(get_app_db)):
             record.total_time_ms = (time.time() - start_time) * 1000
             db.commit()
             db.refresh(record)
+            _audit(db, "query.rejected", "query", record.id, {
+                "question": req.question,
+                "reason": gen_result.error,
+            })
             return QueryStatus.model_validate(record)
 
         record.generated_sql = gen_result.sql
@@ -682,6 +686,28 @@ async def get_stats(db: Session = Depends(get_app_db)):
             for r in recent
         ],
     }
+
+
+# ============================================================================
+# AUDIT ENDPOINT
+# ============================================================================
+
+@app.get("/api/v1/audit", tags=["Audit"])
+async def get_audit_trail(limit: int = 50, db: Session = Depends(get_app_db)):
+    """Retrieve audit log entries for security and compliance."""
+    events = db.query(AuditEvent).order_by(AuditEvent.created_at.desc()).limit(limit).all()
+    return [
+        {
+            "id": e.id,
+            "event_type": e.event_type,
+            "action": e.action,
+            "resource_type": e.resource_type,
+            "resource_id": e.resource_id,
+            "details": e.details,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+        for e in events
+    ]
 
 
 # ============================================================================
