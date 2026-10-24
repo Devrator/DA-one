@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: querypilot-postgres
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: querypilot
+      POSTGRES_PASSWORD: querypilot_dev
+      POSTGRES_DB: querypilot_app
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ./database/seed_clean.sql:/docker-entrypoint-initdb.d/02-seed-clean.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U querypilot -d querypilot_app"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
