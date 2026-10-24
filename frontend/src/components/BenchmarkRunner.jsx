@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, CheckCircle2, XCircle, AlertTriangle, ShieldCheck, Clock, Award, Activity, AlertCircle, RefreshCw } from 'lucide-react';
+import { Play, CheckCircle2, XCircle, AlertTriangle, ShieldCheck, Clock, Award, Activity, AlertCircle, RefreshCw, ChevronDown, ChevronRight, Database, Code2 } from 'lucide-react';
 
 export default function BenchmarkRunner() {
   const [runs, setRuns] = useState([]);
   const [activeRun, setActiveRun] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('all');
+  const [expandedRef, setExpandedRef] = useState({});
   const pollRef = useRef(null);
 
   const fetchRuns = async () => {
@@ -94,6 +95,10 @@ export default function BenchmarkRunner() {
     }
   };
 
+  const toggleRefSql = (id) => {
+    setExpandedRef(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
   const results = activeRun?.results || [];
   const categories = ['all', ...new Set(results.map(r => r.category).filter(Boolean))];
 
@@ -104,31 +109,36 @@ export default function BenchmarkRunner() {
   // Exact metrics derived strictly from recorded executions
   const totalEvaluated = results.length;
   const totalExpected = activeRun?.total_cases || (isRunning ? 31 : totalEvaluated);
-  const correctCount = results.filter(r => r.result_correct).length;
 
   const executableCases = results.filter(r => r.expected_behavior === 'success');
+  const semanticCorrectCount = executableCases.filter(r => r.result_correct).length;
   const execSuccessCount = executableCases.filter(r => r.execution_success).length;
 
   const safetyCases = results.filter(r => r.expected_behavior === 'reject' || r.category === 'safety');
   const safetyBlockedCount = safetyCases.filter(r => r.policy_outcome === 'rejected' || r.result_correct).length;
 
+  const clarificationCases = results.filter(r => r.expected_behavior === 'clarification');
+  const clarificationCorrectCount = clarificationCases.filter(r => r.policy_outcome === 'clarification' || r.result_correct).length;
+
   const validLatencies = results.map(r => r.latency_ms).filter(v => v != null && !isNaN(v));
   let medianLatency = null;
-  if (totalEvaluated > 0) {
-    if (validLatencies.length > 0) {
-      const sorted = [...validLatencies].sort((a, b) => a - b);
-      medianLatency = Math.round(sorted[Math.floor(sorted.length / 2)]);
-    } else if (activeRun?.median_latency_ms != null) {
-      medianLatency = Math.round(activeRun.median_latency_ms);
-    }
+  let p95Latency = null;
+  if (validLatencies.length > 0) {
+    const sorted = [...validLatencies].sort((a, b) => a - b);
+    medianLatency = Math.round(sorted[Math.floor(sorted.length / 2)]);
+    p95Latency = Math.round(sorted[Math.min(Math.floor(sorted.length * 0.95), sorted.length - 1)]);
+  } else if (activeRun?.median_latency_ms != null) {
+    medianLatency = Math.round(activeRun.median_latency_ms);
+    p95Latency = activeRun.p95_latency_ms != null ? Math.round(activeRun.p95_latency_ms) : null;
   }
 
-  const accuracyPct = totalEvaluated > 0 ? Math.round((correctCount / totalEvaluated) * 100) : null;
+  const semanticPct = executableCases.length > 0 ? Math.round((semanticCorrectCount / executableCases.length) * 100) : null;
   const execPct = executableCases.length > 0 ? Math.round((execSuccessCount / executableCases.length) * 100) : null;
   const safetyPct = safetyCases.length > 0 ? Math.round((safetyBlockedCount / safetyCases.length) * 100) : null;
+  const clarifyPct = clarificationCases.length > 0 ? Math.round((clarificationCorrectCount / clarificationCases.length) * 100) : null;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%', maxWidth: '1200px', margin: '0 auto' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%', maxWidth: '1280px', margin: '0 auto' }}>
       {/* Header and Controls */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
@@ -136,7 +146,7 @@ export default function BenchmarkRunner() {
             Empirical Evaluation Benchmark
           </h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-            Curated 31-case ground-truth test suite measuring accuracy, AST validity, latency, and security rejection.
+            Curated 31-case ground-truth test suite measuring semantic correctness, execution success, AST security rejection, and latency.
           </p>
         </div>
 
@@ -157,7 +167,7 @@ export default function BenchmarkRunner() {
             >
               {runs.map((r, i) => (
                 <option key={r.id} value={r.id}>
-                  Run #{runs.length - i} — {r.status.toUpperCase()} ({r.correct_results}/{r.total_cases || 31} passed)
+                  Run #{runs.length - i} — {r.status.toUpperCase()} ({r.correct_results}/{r.total_cases || 31} semantic correct)
                 </option>
               ))}
             </select>
@@ -218,7 +228,7 @@ export default function BenchmarkRunner() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.9rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#ffffff', fontWeight: 600 }}>
               <Activity size={16} className="animate-spin" style={{ color: 'var(--accent-primary)' }} />
-              <span>Evaluating Benchmark Test Cases...</span>
+              <span>Evaluating Benchmark Test Cases Against Local Ollama & PostgreSQL Target...</span>
             </div>
             <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
               {totalEvaluated} / {totalExpected} ({totalExpected > 0 ? Math.round((totalEvaluated / totalExpected) * 100) : 0}%)
@@ -243,35 +253,45 @@ export default function BenchmarkRunner() {
         </div>
       )}
 
-      {/* KPI Cards — Purely computed from real recorded executions */}
-      <div className="benchmark-grid">
+      {/* 5 Distinct Metric Cards — Clearly defined denominators */}
+      <div className="benchmark-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
         <div className="stat-card">
-          <div className="stat-label">Evaluation Accuracy</div>
-          <div className="stat-value" style={{ color: accuracyPct != null ? (accuracyPct >= 70 ? '#10b981' : '#f59e0b') : 'var(--text-muted)' }}>
-            {accuracyPct != null ? `${accuracyPct}%` : '—'}
+          <div className="stat-label">Semantic Correctness</div>
+          <div className="stat-value" style={{ color: semanticPct != null ? (semanticPct >= 80 ? '#10b981' : '#f59e0b') : 'var(--text-muted)' }}>
+            {semanticPct != null ? `${semanticPct}%` : '—'}
           </div>
           <div className="stat-sub">
-            {totalEvaluated > 0 ? `${correctCount} of ${totalEvaluated} evaluated passed` : 'No cases evaluated yet'}
+            {executableCases.length > 0 ? `${semanticCorrectCount} of ${executableCases.length} analytical answers match ground truth rows` : 'Pending analytical cases'}
           </div>
         </div>
 
         <div className="stat-card">
-          <div className="stat-label">Execution Rate</div>
+          <div className="stat-label">Execution Success Rate</div>
           <div className="stat-value" style={{ color: execPct != null ? '#38bdf8' : 'var(--text-muted)' }}>
             {execPct != null ? `${execPct}%` : '—'}
           </div>
           <div className="stat-sub">
-            {executableCases.length > 0 ? `${execSuccessCount} of ${executableCases.length} executable queries ran without error` : 'No executable queries evaluated'}
+            {executableCases.length > 0 ? `${execSuccessCount} of ${executableCases.length} queries executed cleanly on DB` : 'Pending execution'}
           </div>
         </div>
 
         <div className="stat-card">
-          <div className="stat-label">Safety Enforcement</div>
+          <div className="stat-label">Security Enforcement</div>
           <div className="stat-value" style={{ color: safetyPct != null ? '#a855f7' : 'var(--text-muted)' }}>
             {safetyPct != null ? `${safetyPct}%` : '—'}
           </div>
           <div className="stat-sub">
-            {safetyCases.length > 0 ? `${safetyBlockedCount} of ${safetyCases.length} adversarial/injection tests blocked` : 'No safety cases evaluated'}
+            {safetyCases.length > 0 ? `${safetyBlockedCount} of ${safetyCases.length} attacks rejected prior to execution` : 'Pending safety tests'}
+          </div>
+        </div>
+
+        <div className="stat-card">
+          <div className="stat-label">Clarification Handling</div>
+          <div className="stat-value" style={{ color: clarifyPct != null ? '#60a5fa' : 'var(--text-muted)' }}>
+            {clarifyPct != null ? `${clarifyPct}%` : '—'}
+          </div>
+          <div className="stat-sub">
+            {clarificationCases.length > 0 ? `${clarificationCorrectCount} of ${clarificationCases.length} ambiguous queries handled` : 'Pending clarification test'}
           </div>
         </div>
 
@@ -280,7 +300,9 @@ export default function BenchmarkRunner() {
           <div className="stat-value" style={{ color: medianLatency != null ? '#f59e0b' : 'var(--text-muted)' }}>
             {medianLatency != null ? `${medianLatency}ms` : '—'}
           </div>
-          <div className="stat-sub">Model inference + validation + DB execution</div>
+          <div className="stat-sub">
+            {p95Latency ? `P95 Latency: ${p95Latency}ms` : 'Inference + AST + DB execution'}
+          </div>
         </div>
       </div>
 
@@ -324,12 +346,12 @@ export default function BenchmarkRunner() {
             <thead>
               <tr>
                 <th style={{ width: '35px' }}>#</th>
-                <th style={{ width: '45px' }}>Status</th>
-                <th>Scenario / Question</th>
-                <th>Category</th>
-                <th>Expected Outcome</th>
-                <th>Actual Outcome</th>
-                <th>Latency</th>
+                <th style={{ width: '90px' }}>Evaluation</th>
+                <th>Scenario / Question & SQL Inspection</th>
+                <th style={{ width: '95px' }}>Category</th>
+                <th style={{ width: '100px' }}>Expected</th>
+                <th style={{ width: '120px' }}>Actual Outcome</th>
+                <th style={{ width: '75px' }}>Latency</th>
               </tr>
             </thead>
             <tbody>
@@ -345,29 +367,79 @@ export default function BenchmarkRunner() {
                 </tr>
               ) : (
                 filteredResults.map((tc, idx) => {
-                  const isPass = tc.result_correct;
                   const isSafety = tc.expected_behavior === 'reject';
                   const isClarify = tc.expected_behavior === 'clarification';
+                  const isAnalytical = tc.expected_behavior === 'success';
+
+                  // Explicit status determination
+                  let statusBadge = null;
+                  if (isSafety) {
+                    if (tc.policy_outcome === 'rejected' || tc.result_correct) {
+                      statusBadge = (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#a855f7' }}>
+                          <CheckCircle2 size={15} />
+                          <span style={{ fontSize: '0.7rem', fontWeight: 600 }}>BLOCKED</span>
+                        </div>
+                      );
+                    } else {
+                      statusBadge = (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--danger)' }}>
+                          <XCircle size={15} />
+                          <span style={{ fontSize: '0.7rem', fontWeight: 600 }}>UNSAFE</span>
+                        </div>
+                      );
+                    }
+                  } else if (isClarify) {
+                    if (tc.policy_outcome === 'clarification' || tc.result_correct) {
+                      statusBadge = (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#60a5fa' }}>
+                          <CheckCircle2 size={15} />
+                          <span style={{ fontSize: '0.7rem', fontWeight: 600 }}>CLARIFIED</span>
+                        </div>
+                      );
+                    } else {
+                      statusBadge = (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--danger)' }}>
+                          <XCircle size={15} />
+                          <span style={{ fontSize: '0.7rem', fontWeight: 600 }}>FAIL</span>
+                        </div>
+                      );
+                    }
+                  } else {
+                    // Analytical query
+                    if (tc.result_correct) {
+                      statusBadge = (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--success)' }}>
+                          <CheckCircle2 size={15} />
+                          <span style={{ fontSize: '0.7rem', fontWeight: 600 }}>CORRECT</span>
+                        </div>
+                      );
+                    } else if (tc.execution_success) {
+                      statusBadge = (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#f59e0b' }}>
+                          <AlertTriangle size={15} />
+                          <span style={{ fontSize: '0.7rem', fontWeight: 600 }}>MISMATCH</span>
+                        </div>
+                      );
+                    } else {
+                      statusBadge = (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--danger)' }}>
+                          <XCircle size={15} />
+                          <span style={{ fontSize: '0.7rem', fontWeight: 600 }}>ERROR</span>
+                        </div>
+                      );
+                    }
+                  }
+
+                  const isExpanded = expandedRef[tc.id || idx];
 
                   return (
                     <tr key={tc.id || idx}>
                       <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
                         {idx + 1}
                       </td>
-                      <td>
-                        {isPass ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--success)' }}>
-                            <CheckCircle2 size={16} />
-                            <span style={{ fontSize: '0.7rem', fontWeight: 600 }}>PASS</span>
-                          </div>
-                        ) : (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--danger)' }}>
-                            <XCircle size={16} />
-                            <span style={{ fontSize: '0.7rem', fontWeight: 600 }}>FAIL</span>
-                          </div>
-                        )}
-                      </td>
-                      <td style={{ maxWidth: '420px' }}>
+                      <td>{statusBadge}</td>
+                      <td style={{ maxWidth: '460px' }}>
                         <div style={{ fontWeight: 500, color: '#f8fafc', fontSize: '0.85rem' }}>{tc.question}</div>
                         {tc.generated_sql && (
                           <div style={{
@@ -375,14 +447,52 @@ export default function BenchmarkRunner() {
                             fontSize: '0.72rem',
                             color: '#38bdf8',
                             marginTop: '4px',
-                            background: 'rgba(0,0,0,0.25)',
-                            padding: '3px 6px',
-                            borderRadius: '3px',
+                            background: 'rgba(0,0,0,0.3)',
+                            padding: '4px 8px',
+                            borderRadius: '4px',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap'
                           }}>
+                            <span style={{ color: 'var(--text-muted)', marginRight: '6px' }}>Generated:</span>
                             {tc.generated_sql}
+                          </div>
+                        )}
+                        {tc.expected_sql && (
+                          <div style={{ marginTop: '4px' }}>
+                            <button
+                              onClick={() => toggleRefSql(tc.id || idx)}
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                color: 'var(--text-secondary)',
+                                cursor: 'pointer',
+                                fontSize: '0.7rem',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                padding: '0'
+                              }}
+                            >
+                              {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                              {isExpanded ? 'Hide Reference SQL' : 'View Verified Reference SQL'}
+                            </button>
+                            {isExpanded && (
+                              <div style={{
+                                fontFamily: 'var(--font-mono)',
+                                fontSize: '0.7rem',
+                                color: '#a7f3d0',
+                                marginTop: '4px',
+                                background: 'rgba(16, 185, 129, 0.08)',
+                                border: '1px solid rgba(16, 185, 129, 0.2)',
+                                padding: '6px 8px',
+                                borderRadius: '4px',
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-all'
+                              }}>
+                                {tc.expected_sql}
+                              </div>
+                            )}
                           </div>
                         )}
                         {tc.error_message && (
@@ -406,20 +516,26 @@ export default function BenchmarkRunner() {
                         {isSafety ? (
                           <span style={{ color: '#a855f7', fontWeight: 500 }}>Security Block</span>
                         ) : isClarify ? (
-                          <span style={{ color: 'var(--warning)', fontWeight: 500 }}>Clarification</span>
+                          <span style={{ color: '#60a5fa', fontWeight: 500 }}>Clarification</span>
                         ) : (
                           <span style={{ color: 'var(--success)', fontWeight: 500 }}>Valid Query</span>
                         )}
                       </td>
                       <td style={{ fontSize: '0.78rem' }}>
                         {tc.policy_outcome === 'rejected' ? (
-                          <span style={{ color: 'var(--success)' }}>Blocked by Policy</span>
+                          <span style={{ color: '#a855f7' }}>Blocked by Policy</span>
                         ) : tc.policy_outcome === 'executed' ? (
-                          <span style={{ color: 'var(--success)' }}>Executed ({tc.execution_success ? 'Success' : 'Error'})</span>
+                          <span style={{ color: tc.result_correct ? 'var(--success)' : '#f59e0b' }}>
+                            {tc.result_correct ? 'Semantic Match' : 'Semantic Mismatch'}
+                          </span>
+                        ) : tc.policy_outcome === 'semantic_mismatch' ? (
+                          <span style={{ color: '#f59e0b', fontWeight: 500 }}>Semantic Mismatch</span>
                         ) : tc.policy_outcome === 'clarification' ? (
-                          <span style={{ color: 'var(--warning)' }}>Clarification Requested</span>
+                          <span style={{ color: '#60a5fa' }}>Clarification Asked</span>
                         ) : tc.policy_outcome === 'allowed_unsafe' ? (
-                          <span style={{ color: 'var(--danger)', fontWeight: 600 }}>Not Blocked (Unsafe)</span>
+                          <span style={{ color: 'var(--danger)', fontWeight: 600 }}>Unsafe Allowed</span>
+                        ) : tc.policy_outcome === 'execution_error' ? (
+                          <span style={{ color: 'var(--danger)' }}>Execution Error</span>
                         ) : (
                           <span style={{ color: 'var(--text-muted)' }}>{tc.policy_outcome || '—'}</span>
                         )}

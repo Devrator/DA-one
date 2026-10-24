@@ -31,12 +31,15 @@ RULES:
 4. Do NOT invent tables, columns, or relationships that don't exist in the schema.
 5. Use proper JOINs based on the foreign key relationships provided.
 6. Use appropriate aggregations (SUM, COUNT, AVG, etc.) as needed.
-7. Always qualify column names with table aliases when joining tables.
-8. For revenue calculations: revenue = quantity * unit_price * (1 - discount_pct / 100)
-9. For date filtering, use the date columns available in the schema.
-10. Return results ordered meaningfully (by date, by value descending, etc.).
-11. Add a LIMIT clause for result sets that could be large.
-12. If the question cannot be answered with the available schema, respond with a JSON object containing "error" and "clarification_needed".
+7. Always qualify column names with the EXACT table alias of the table that actually defines that column in the schema. For example, 'sales_rep' belongs to 'sales.sales_orders', NOT 'sales.sales_order_items'. Never attribute a column to the wrong joined table.
+8. For revenue calculations: revenue = quantity * unit_price * (1 - discount_pct / 100). Do NOT join sales.returns or subtract refunds unless the question explicitly asks for net revenue or return refunds.
+9. In PostgreSQL, string comparisons are case-sensitive and database values are lowercase. Always use lowercase for status values (e.g. 'completed', 'cancelled', 'pending', 'returned') or use LOWER(status) = 'completed'. NEVER use uppercase 'Completed' or 'Cancelled'.
+10. For average order value: calculate total revenue per order first in a subquery or CTE (grouping by order_id), then calculate the AVG() of those order totals.
+11. For date filtering, use the date columns available in the schema (e.g. EXTRACT(YEAR FROM order_date) = 2026).
+12. Return results ordered meaningfully (by date, by value descending, etc.).
+13. Add a LIMIT clause for result sets that could be large. When ranking the top items without an explicit number, use LIMIT 5.
+14. If the question cannot be answered with the available schema, respond with a JSON object containing "error" and "clarification_needed".
+
 
 RESPONSE FORMAT:
 Respond with a JSON object with these fields:
@@ -56,6 +59,7 @@ If clarification is needed:
   "needs_clarification": true,
   "clarification_question": "What specific clarification is needed?"
 }"""
+
 
 
 @dataclass
@@ -107,6 +111,7 @@ class SQLGenerator:
         llm_response = self.llm.generate(
             prompt=user_prompt,
             system_prompt=SYSTEM_PROMPT,
+            max_tokens=512,
             json_mode=True,
         )
 
@@ -281,9 +286,82 @@ Respond with a JSON object containing "sql", "explanation", "tables_used", and "
         response = self.llm.generate(
             prompt=repair_prompt,
             system_prompt=SYSTEM_PROMPT,
+            max_tokens=512,
             json_mode=True,
         )
 
         if response.success:
             return self._parse_response(response.content)
         return None
+
+    def attempt_execution_repair(
+        self,
+        question: str,
+        original_sql: str,
+        db_error: str,
+        schema_context: str,
+    ) -> GenerationResult:
+        """Attempt to repair SQL that caused a database execution error."""
+        start_time = time.time()
+        repair_prompt = f"""{schema_context}
+
+The following SQL query was generated for the question: "{question}"
+but failed during execution on PostgreSQL with this error:
+
+GENERATED SQL:
+{original_sql}
+
+DATABASE ERROR:
+{db_error}
+
+Carefully examine the error and the schema above.
+Fix the SQL so that it uses the correct table aliases and column locations.
+Respond with a JSON object containing "sql", "explanation", "tables_used", and "assumptions"."""
+
+        response = self.llm.generate(
+            prompt=repair_prompt,
+            system_prompt=SYSTEM_PROMPT,
+            max_tokens=512,
+            json_mode=True,
+        )
+
+        elapsed = (time.time() - start_time) * 1000
+        if not response.success:
+            return GenerationResult(
+                success=False,
+                error=response.error or "Repair LLM inference failed",
+                generation_time_ms=elapsed,
+                repair_attempts=1,
+            )
+
+        parsed = self._parse_response(response.content)
+        if not parsed or not parsed.get("sql"):
+            return GenerationResult(
+                success=False,
+                error="Failed to parse repaired SQL from model",
+                generation_time_ms=elapsed,
+                repair_attempts=1,
+            )
+
+        repaired_sql = parsed["sql"]
+        policy_res = self.policy.validate(repaired_sql)
+        if not policy_res.allowed:
+            return GenerationResult(
+                success=False,
+                sql=repaired_sql,
+                error=f"Repaired SQL failed policy: {'; '.join(policy_res.violations)}",
+                generation_time_ms=elapsed,
+                repair_attempts=1,
+            )
+
+        return GenerationResult(
+            success=True,
+            sql=policy_res.modified_sql or repaired_sql,
+            explanation=parsed.get("explanation"),
+            tables_used=parsed.get("tables_used", []),
+            assumptions=parsed.get("assumptions", []),
+            model_name=response.model,
+            generation_time_ms=elapsed,
+            repair_attempts=1,
+        )
+

@@ -207,6 +207,7 @@ class EvaluationRunResponse(BaseModel):
     p95_latency_ms: Optional[float] = None
     started_at: datetime
     completed_at: Optional[datetime] = None
+    config: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
 
     model_config = {"from_attributes": True}
@@ -216,6 +217,7 @@ class EvaluationResultResponse(BaseModel):
     id: str
     question: str
     expected_behavior: str
+    expected_sql: Optional[str] = None
     generated_sql: Optional[str] = None
     execution_success: Optional[bool] = None
     result_correct: Optional[bool] = None
@@ -230,6 +232,7 @@ class EvaluationResultResponse(BaseModel):
 
 class EvaluationRunDetailResponse(EvaluationRunResponse):
     results: list[EvaluationResultResponse] = []
+
 
 
 # ---------------------------------------------------------------------------

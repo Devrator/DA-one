@@ -125,6 +125,7 @@ class LLMProvider:
             "model": self.model,
             "messages": messages,
             "stream": False,
+            "keep_alive": "30m",
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
@@ -133,6 +134,7 @@ class LLMProvider:
 
         if json_mode:
             payload["format"] = "json"
+
 
         try:
             resp = self._client.post(

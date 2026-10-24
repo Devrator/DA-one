@@ -18,6 +18,7 @@ from app.services.schema_service import SchemaService
 from app.services.sql_generator import SQLGenerator
 from app.services.sql_safety import SQLPolicyEngine
 from app.services.query_executor import QueryExecutor
+from app.services.eval_comparator import compare_query_results, BENCHMARK_REFERENCE_SPECS
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -309,15 +310,23 @@ def run_benchmark(
     session.commit()
 
     successful_executions = 0
-    correct_results = 0
+    semantic_correct = 0
     unsafe_rejected = 0
     clarification_correct = 0
     repair_successes = 0
+    executable_cases = 0
+    safety_cases = 0
+    clarification_cases = 0
     latencies = []
 
     try:
-        for tc in test_cases:
+        for idx, tc in enumerate(test_cases, start=1):
             start = time.time()
+            ref_spec = BENCHMARK_REFERENCE_SPECS.get(idx) or next(
+                (s for s in BENCHMARK_REFERENCE_SPECS.values() if s["question"].strip().lower() == tc["question"].strip().lower()),
+                None
+            )
+            expected_sql = ref_spec.get("reference_sql") if ref_spec else None
 
             try:
                 gen_result = generator.generate(
@@ -333,6 +342,7 @@ def run_benchmark(
                 error_msg = None
 
                 if tc["expected_behavior"] == "reject":
+                    safety_cases += 1
                     # Safety test: the system should reject this
                     if gen_result.needs_clarification or not gen_result.success:
                         unsafe_rejected += 1
@@ -347,42 +357,94 @@ def run_benchmark(
                             policy_outcome = "rejected"
                         else:
                             policy_outcome = "allowed_unsafe"
+                            result_correct = False
                             error_msg = f"Safety test: SQL was not rejected ({policy_result.violations})"
 
                 elif tc["expected_behavior"] == "clarification":
+                    clarification_cases += 1
                     if gen_result.needs_clarification:
                         clarification_correct += 1
                         result_correct = True
                         policy_outcome = "clarification"
                     else:
                         policy_outcome = "unexpected_generation"
+                        result_correct = False
                         error_msg = "Expected clarification but generated SQL"
 
                 elif tc["expected_behavior"] == "success":
+                    executable_cases += 1
                     if gen_result.success and gen_result.sql:
                         policy_result = policy.validate(gen_result.sql)
                         if not policy_result.allowed:
                             policy_outcome = "policy_blocked"
+                            result_correct = False
                             error_msg = f"Policy rejected generated query: {policy_result.violations}"
                         else:
                             sql_to_run = policy_result.modified_sql or gen_result.sql
                             exec_result = executor.execute(engine, sql_to_run)
+
+                            # Bounded execution repair if runtime database error occurred
+                            if not exec_result.success and exec_result.error and "timeout" not in str(exec_result.error).lower():
+                                logger.info("Execution failed for '%s'; attempting bounded repair", tc["question"])
+                                repair_res = generator.attempt_execution_repair(
+                                    question=tc["question"],
+                                    original_sql=sql_to_run,
+                                    db_error=str(exec_result.error),
+                                    schema_context=schema_context,
+                                )
+                                if repair_res.success and repair_res.sql:
+                                    repair_pol = policy.validate(repair_res.sql)
+                                    if repair_pol.allowed:
+                                        rep_sql_to_run = repair_pol.modified_sql or repair_res.sql
+                                        rep_exec = executor.execute(engine, rep_sql_to_run)
+                                        if rep_exec.success:
+                                            exec_result = rep_exec
+                                            gen_result.sql = rep_sql_to_run
+                                            repair_successes += 1
+                                            logger.info("Bounded repair succeeded for '%s'", tc["question"])
+
                             execution_success = bool(exec_result.success)
                             if exec_result.success:
                                 successful_executions += 1
-                                correct_results += 1
-                                result_correct = True
-                                policy_outcome = "executed"
+                                # Semantic evaluation against ground-truth reference
+                                if ref_spec and ref_spec.get("reference_sql"):
+                                    try:
+                                        ref_exec = executor.execute(engine, ref_spec["reference_sql"])
+                                        if ref_exec.success:
+                                            actual_rows = getattr(exec_result, "rows", None) or getattr(exec_result, "data", [])
+                                            ref_rows = getattr(ref_exec, "rows", None) or getattr(ref_exec, "data", [])
+                                            cmp = compare_query_results(actual_rows, ref_rows, ref_spec)
+                                            if cmp.is_match:
+                                                result_correct = True
+                                                semantic_correct += 1
+                                                policy_outcome = "executed"
+                                            else:
+                                                result_correct = False
+                                                policy_outcome = "semantic_mismatch"
+                                                diff_info = "; ".join(cmp.differences[:2]) if cmp.differences else (cmp.reason or "Result data mismatch")
+                                                error_msg = f"Semantic mismatch: {diff_info}"
+                                        else:
+                                            result_correct = False
+                                            policy_outcome = "unverified_reference"
+                                            error_msg = f"Reference SQL error: {ref_exec.error}"
+                                    except Exception as comp_err:
+                                        result_correct = False
+                                        policy_outcome = "comparison_error"
+                                        error_msg = f"Semantic comparison error: {str(comp_err)}"
+                                else:
+                                    result_correct = False
+                                    policy_outcome = "unverified_reference"
+                                    error_msg = "Reference specification missing"
                             else:
                                 error_msg = str(exec_result.error) if exec_result.error else "Execution failed"
                                 policy_outcome = "execution_error"
-                            if gen_result.repair_attempts > 0 and exec_result.success:
-                                repair_successes += 1
                     elif gen_result.needs_clarification:
                         policy_outcome = "clarification"
+                        result_correct = False
                         error_msg = "Expected success but got clarification"
                     else:
                         policy_outcome = "generation_error"
+                        result_correct = False
                         error_msg = gen_result.error
 
                 # Store result
@@ -390,6 +452,7 @@ def run_benchmark(
                     run_id=run_id,
                     question=tc["question"],
                     expected_behavior=tc["expected_behavior"],
+                    expected_sql=expected_sql,
                     generated_sql=gen_result.sql,
                     execution_success=execution_success,
                     result_correct=result_correct,
@@ -403,10 +466,23 @@ def run_benchmark(
 
                 # Live update run progress and metrics
                 run.successful_executions = successful_executions
-                run.correct_results = correct_results
+                run.correct_results = semantic_correct
                 run.unsafe_rejected = unsafe_rejected
                 run.clarification_correct = clarification_correct
                 run.repair_successes = repair_successes
+                run.config = {
+                    "executable_cases": executable_cases,
+                    "successful_executions": successful_executions,
+                    "execution_rate_pct": round(successful_executions / executable_cases * 100, 1) if executable_cases else 0,
+                    "semantic_correct": semantic_correct,
+                    "semantic_accuracy_pct": round(semantic_correct / executable_cases * 100, 1) if executable_cases else 0,
+                    "safety_cases": safety_cases,
+                    "unsafe_rejected": unsafe_rejected,
+                    "safety_enforcement_pct": round(unsafe_rejected / safety_cases * 100, 1) if safety_cases else 0,
+                    "clarification_cases": clarification_cases,
+                    "clarification_correct": clarification_correct,
+                    "clarification_pct": round(clarification_correct / clarification_cases * 100, 1) if clarification_cases else 0,
+                }
                 if latencies:
                     sl = sorted(latencies)
                     run.median_latency_ms = sl[len(sl) // 2]
@@ -423,6 +499,7 @@ def run_benchmark(
                         run_id=run_id,
                         question=tc["question"],
                         expected_behavior=tc["expected_behavior"],
+                        expected_sql=expected_sql,
                         execution_success=False,
                         result_correct=False,
                         latency_ms=latency_ms,
@@ -442,20 +519,35 @@ def run_benchmark(
         p95_idx = int(len(sorted_latencies) * 0.95)
 
         run.successful_executions = successful_executions
-        run.correct_results = correct_results
+        run.correct_results = semantic_correct
         run.unsafe_rejected = unsafe_rejected
         run.clarification_correct = clarification_correct
         run.repair_successes = repair_successes
+        run.config = {
+            "executable_cases": executable_cases,
+            "successful_executions": successful_executions,
+            "execution_rate_pct": round(successful_executions / executable_cases * 100, 1) if executable_cases else 0,
+            "semantic_correct": semantic_correct,
+            "semantic_accuracy_pct": round(semantic_correct / executable_cases * 100, 1) if executable_cases else 0,
+            "safety_cases": safety_cases,
+            "unsafe_rejected": unsafe_rejected,
+            "safety_enforcement_pct": round(unsafe_rejected / safety_cases * 100, 1) if safety_cases else 0,
+            "clarification_cases": clarification_cases,
+            "clarification_correct": clarification_correct,
+            "clarification_pct": round(clarification_correct / clarification_cases * 100, 1) if clarification_cases else 0,
+        }
         run.median_latency_ms = sorted_latencies[mid] if sorted_latencies else None
         run.p95_latency_ms = sorted_latencies[min(p95_idx, len(sorted_latencies) - 1)] if sorted_latencies else None
         run.status = "completed"
         run.completed_at = datetime.now(timezone.utc)
         session.commit()
 
+
         logger.info(
-            "Evaluation run %s completed: %d/%d correct, %d unsafe rejected",
-            run_id, correct_results, len(test_cases), unsafe_rejected,
+            "Evaluation run %s completed: %d/%d semantic correct, %d unsafe rejected",
+            run_id, semantic_correct, len(test_cases), unsafe_rejected,
         )
+
 
     except BaseException as exc:
         logger.error("Evaluation run %s interrupted: %s", run_id, exc)

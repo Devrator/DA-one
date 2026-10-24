@@ -407,21 +407,26 @@ async def submit_query(req: QueryRequest, db: Session = Depends(get_app_db)):
         record.execution_time_ms = exec_result.execution_time_ms
 
         if not exec_result.success:
-            # Execution failed — try one repair if it's a fixable error
-            if exec_result.error_category in ("syntax_error", "object_not_found") and gen_result.repair_attempts < 2:
-                # Attempt repair with the database error
+            # Execution failed — bounded repair with database error context
+            if gen_result.repair_attempts < 2 and "timeout" not in str(exec_result.error or "").lower():
                 record.status = "generating"
                 db.commit()
 
-                repair_gen = generator.generate(
-                    question=f"{req.question}\n\nPrevious SQL failed with error: {exec_result.error}",
+                repair_gen = generator.attempt_execution_repair(
+                    question=req.question,
+                    original_sql=gen_result.sql,
+                    db_error=str(exec_result.error),
                     schema_context=schema_context,
                 )
                 if repair_gen.success and repair_gen.sql:
-                    exec_result = executor.execute(engine, repair_gen.sql)
-                    record.generated_sql = repair_gen.sql
-                    record.validated_sql = repair_gen.sql
-                    record.execution_time_ms = exec_result.execution_time_ms
+                    rep_exec = executor.execute(engine, repair_gen.sql)
+                    if rep_exec.success:
+                        exec_result = rep_exec
+                        gen_result.sql = repair_gen.sql
+                        record.generated_sql = repair_gen.sql
+                        record.validated_sql = repair_gen.sql
+                        record.execution_time_ms = rep_exec.execution_time_ms
+
 
             if not exec_result.success:
                 record.status = "failed"
@@ -448,6 +453,8 @@ async def submit_query(req: QueryRequest, db: Session = Depends(get_app_db)):
             question=req.question,
         )
         record.chart_spec = chart_spec
+        db.commit()
+
 
         # 7. Generate explanation
         explanation_svc = get_explanation_service()

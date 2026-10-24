@@ -180,7 +180,7 @@ class SchemaService:
                 if col.is_primary_key:
                     markers.append("PK")
                 if col.is_foreign_key:
-                    markers.append(f"FK → {col.foreign_key_ref}")
+                    markers.append(f"FK -> {col.foreign_key_ref}")
                 if not col.is_nullable:
                     markers.append("NOT NULL")
 
@@ -194,7 +194,7 @@ class SchemaService:
             lines.append("RELATIONSHIPS:")
             seen = set()
             for rel in schema.relationships:
-                key = f"{rel['from_table']}.{rel['from_column']} → {rel['to_table']}.{rel['to_column']}"
+                key = f"{rel['from_table']}.{rel['from_column']} -> {rel['to_table']}.{rel['to_column']}"
                 if key not in seen:
                     lines.append(f"  {key}")
                     seen.add(key)

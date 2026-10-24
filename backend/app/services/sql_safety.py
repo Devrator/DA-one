@@ -55,6 +55,14 @@ PROHIBITED_SCHEMAS = {
     "pg_catalog", "information_schema", "pg_toast",
 }
 
+# Prohibited system and sensitive tables
+PROHIBITED_TABLES = {
+    "pg_shadow", "pg_authid", "pg_user", "pg_roles", "pg_database",
+    "pg_tables", "pg_stat_activity", "pg_settings", "pg_hba_file_rules",
+    "pg_file_settings", "pg_config",
+}
+
+
 
 class SQLPolicyEngine:
     """Validates SQL against security policies before execution.
@@ -191,11 +199,16 @@ class SQLPolicyEngine:
             full_name = f"{schema_name}.{table_name}" if schema_name else table_name
             tables_accessed.append(full_name)
 
+            # Check for prohibited system tables (even without explicit schema prefix)
+            if table_name and (table_name.lower() in PROHIBITED_TABLES or table_name.lower().startswith("pg_")):
+                violations.append(f"Access to system table '{table_name}' is not permitted")
+
             # Check schema allowlist
             if schema_name and schema_name.lower() in PROHIBITED_SCHEMAS:
                 violations.append(f"Access to schema '{schema_name}' is not permitted")
             elif schema_name and schema_name.lower() not in {s.lower() for s in self.allowed_schemas}:
                 violations.append(f"Schema '{schema_name}' is not in the allowed schemas: {self.allowed_schemas}")
+
 
             # Check table allowlist if specified
             if self.allowed_tables is not None:
