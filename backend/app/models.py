@@ -31,11 +31,12 @@ class Connection(Base):
     id = Column(String(36), primary_key=True, default=new_uuid)
     name = Column(String(200), nullable=False)
     db_type = Column(String(50), nullable=False, default="postgresql")
+    connector_type = Column(String(30), nullable=False, default="postgresql")  # postgresql | sap_s4hana
     host = Column(String(255), nullable=False)
     port = Column(Integer, nullable=False, default=5432)
     database_name = Column(String(200), nullable=False)
     username = Column(String(200), nullable=False)
-    encrypted_password = Column(Text, nullable=False)  # Encrypted at rest
+    encrypted_password = Column(Text, nullable=False)  # Encrypted at rest (Fernet envelope)
     schema_name = Column(String(200), default="public")
     is_active = Column(Boolean, default=True)
     owner_user = Column(String(200), nullable=False, default="demo")
@@ -43,6 +44,20 @@ class Connection(Base):
     test_status = Column(String(50), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    # --- SAP S/4HANA connector metadata (nullable for non-SAP sources) ---
+    deployment_type = Column(String(30), nullable=True)   # public_cloud | private_cloud | on_premises | hybrid
+    base_url = Column(String(500), nullable=True)          # approved SAP host root
+    service_path = Column(String(500), nullable=True)      # OData service document path
+    odata_version = Column(String(5), nullable=True)       # 2 | 4
+    auth_mode = Column(String(30), nullable=True)          # basic | oauth_client_credentials | mtls
+    secret_ref = Column(String(300), nullable=True)        # non-secret reference/label for admins
+    tls_verify = Column(Boolean, default=True)
+    lifecycle_status = Column(String(20), default="configured")  # configured/testing/connected/degraded/disconnected/disabled
+    last_success_at = Column(DateTime(timezone=True), nullable=True)
+    metadata_json = Column(JSON, nullable=True)            # cached discovered services/entities
+    metadata_refreshed_at = Column(DateTime(timezone=True), nullable=True)
+    updated_by = Column(String(200), nullable=True)
 
     queries = relationship("QueryRecord", back_populates="connection")
 
@@ -283,4 +298,237 @@ class DiscoveryFinding(Base):
         Index("idx_discovery_finding_sig", "signature"),
         Index("idx_discovery_finding_status", "status"),
         Index("idx_discovery_finding_created", "created_at"),
+    )
+
+
+# ===========================================================================
+# FEATURE 1 + 3: Multi-Thread Investigation Workspace + Root-Cause Engine
+# ===========================================================================
+
+class Investigation(Base):
+    """An investigation opened from a Discover finding (or free-form).
+
+    Holds a tree of parallel branches, each with its own conversational
+    context (via a linked ``ConversationSession``), executions and evidence.
+    """
+    __tablename__ = "investigations"
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    finding_id = Column(String(36), ForeignKey("discovery_findings.id"), nullable=True)
+    title = Column(String(300), nullable=False)
+    root_question = Column(Text, nullable=True)
+    narrative = Column(Text, nullable=True)  # snapshot of the originating finding facts
+    role = Column(String(50), nullable=False, default="executive")
+    status = Column(String(20), nullable=False, default="open")  # open, archived
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    branches = relationship(
+        "InvestigationBranch",
+        back_populates="investigation",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("idx_investigation_status", "status"),
+        Index("idx_investigation_created", "created_at"),
+    )
+
+
+class InvestigationBranch(Base):
+    """A single hypothesis/line of enquiry inside an investigation.
+
+    Branches are connected via ``parent_branch_id`` to form a tree and are kept
+    independent: each owns its own ``session_id`` (multi-turn context) so a
+    follow-up in one branch never pollutes another.
+    """
+    __tablename__ = "investigation_branches"
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    investigation_id = Column(String(36), ForeignKey("investigations.id"), nullable=False)
+    parent_branch_id = Column(String(36), ForeignKey("investigation_branches.id"), nullable=True)
+    title = Column(String(300), nullable=False)
+    seed_question = Column(Text, nullable=True)  # opening question of this branch
+    session_id = Column(String(36), nullable=True)  # linked ConversationSession.id (own context)
+    origin = Column(String(30), nullable=False, default="manual")  # manual, root_cause, finding
+    contributor_segment = Column(String(200), nullable=True)  # when spawned by root-cause
+    status = Column(String(20), nullable=False, default="open")  # open, archived
+    conclusion = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    investigation = relationship("Investigation", back_populates="branches")
+
+    __table_args__ = (
+        Index("idx_branch_investigation", "investigation_id"),
+        Index("idx_branch_parent", "parent_branch_id"),
+    )
+
+
+class RootCauseRun(Base):
+    """A schema-adaptive decomposition of a detected change into ranked,
+    measurable segment contributions. Records reproducible evidence and keeps
+    measured contributions distinct from possible explanations (no causation)."""
+    __tablename__ = "root_cause_runs"
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    investigation_id = Column(String(36), ForeignKey("investigations.id"), nullable=True)
+    finding_id = Column(String(36), ForeignKey("discovery_findings.id"), nullable=True)
+    metric_name = Column(String(120), nullable=True)
+    measure_expr = Column(Text, nullable=True)
+    dimension_label = Column(String(120), nullable=True)
+    dimension_column = Column(String(200), nullable=True)
+    baseline_period = Column(String(60), nullable=True)
+    current_period = Column(String(60), nullable=True)
+    baseline_total = Column(Float, nullable=True)
+    current_total = Column(Float, nullable=True)
+    total_change_abs = Column(Float, nullable=True)
+    total_change_pct = Column(Float, nullable=True)
+    reconciles = Column(Boolean, default=False)  # contributions sum ~ total change
+    contributions = Column(JSON, default=list)  # ranked segment contributions
+    evidence = Column(JSON, default=dict)  # sql, tables, filters, sample size, limitations
+    role = Column(String(50), nullable=False, default="executive")
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        Index("idx_rootcause_finding", "finding_id"),
+        Index("idx_rootcause_investigation", "investigation_id"),
+    )
+
+
+# ===========================================================================
+# FEATURE 2: WHAT-IF DECISION SIMULATOR
+# ===========================================================================
+
+class Scenario(Base):
+    """A deterministic what-if scenario built on a real observed baseline.
+
+    ``baseline``   : observed component values pulled from the live,
+                     role-authorized database (units, avg unit price, realized
+                     discount factor, optional per-unit cost, source metric,
+                     period, executed SQL and tables). These are FACTS.
+    ``assumptions``: user-supplied lever values (volume/price/discount/cost
+                     deltas). These are ASSUMPTIONS, never observed data.
+    ``results``    : the scenario outcome deterministically recomputed from
+                     baseline + assumptions, with the exact formula strings,
+                     units, absolute/percent deltas and a calculated-at
+                     timestamp. Never presented as a guaranteed forecast.
+    """
+    __tablename__ = "scenarios"
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    name = Column(String(200), nullable=False, default="Untitled scenario")
+    role = Column(String(50), nullable=False, default="executive")
+    source = Column(String(30), nullable=False, default="manual")  # manual, finding, workspace
+    finding_id = Column(String(36), ForeignKey("discovery_findings.id"), nullable=True)
+    metric_key = Column(String(60), nullable=True)     # which detected measure forms the baseline
+    metric_label = Column(String(120), nullable=True)
+    period_label = Column(String(80), nullable=True)
+    baseline = Column(JSON, default=dict)              # observed facts
+    assumptions = Column(JSON, default=dict)           # user-supplied levers
+    results = Column(JSON, default=dict)               # calculated scenario + formulas + deltas
+    status = Column(String(20), nullable=False, default="draft")  # draft, saved
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    __table_args__ = (
+        Index("idx_scenario_finding", "finding_id"),
+        Index("idx_scenario_status", "status"),
+        Index("idx_scenario_created", "created_at"),
+    )
+
+
+# ===========================================================================
+# FEATURE 4: PERSONALIZED EXECUTIVE BRIEFINGS
+# ===========================================================================
+
+class Briefing(Base):
+    """A scheduled, role-scoped briefing digest for one recipient.
+
+    Generated ONLY from findings the recipient's own authorization scope can
+    see (never an executive digest forwarded to a restricted user). ``items``
+    is a ranked, de-duplicated list referencing persisted Discover findings
+    plus a link to open each in an investigation. ``signature`` dedups repeated
+    generation for the same recipient + period + finding set.
+    """
+    __tablename__ = "briefings"
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    signature = Column(String(64), nullable=True)          # dedup key
+    recipient_username = Column(String(80), nullable=False)
+    recipient_role = Column(String(50), nullable=False)
+    cadence = Column(String(20), nullable=False, default="daily")  # daily, weekly, manual
+    period_label = Column(String(80), nullable=True)
+    subject = Column(String(300), nullable=True)
+    summary = Column(Text, nullable=True)                   # concise headline
+    items = Column(JSON, default=list)                      # ranked finding refs
+    item_count = Column(Integer, default=0)
+    suppressed_count = Column(Integer, default=0)          # duplicates/stale/dismissed/low-value hidden
+    source_data_freshness_at = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String(20), nullable=False, default="generated")  # generated, empty, delivered, read, failed
+    error_message = Column(Text, nullable=True)
+    retry_count = Column(Integer, default=0)
+    generated_at = Column(DateTime(timezone=True), default=utcnow)
+    delivered_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        Index("idx_briefing_recipient", "recipient_username"),
+        Index("idx_briefing_status", "status"),
+        Index("idx_briefing_sig", "signature"),
+        Index("idx_briefing_generated", "generated_at"),
+    )
+
+
+class BriefingPreference(Base):
+    """Per-user briefing cadence + enabled insight categories."""
+    __tablename__ = "briefing_preferences"
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    username = Column(String(80), nullable=False, unique=True)
+    role = Column(String(50), nullable=False, default="executive")
+    frequency = Column(String(20), nullable=False, default="daily")  # daily, weekly, disabled
+    enabled_categories = Column(JSON, default=list)                 # finding_type keys the user wants
+    delivery_channel = Column(String(30), nullable=False, default="in_app")
+    last_generated_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+# ===========================================================================
+# FEATURE 5: CROSS-SYSTEM INTELLIGENCE
+# ===========================================================================
+
+class CrossSourceMapping(Base):
+    """A relationship between a column in one source and a column in another.
+
+    Candidate mappings are inferred from compatible names/types/key hints and
+    start in ``status='candidate'`` (never auto-joined). A user must explicitly
+    confirm a mapping (``status='confirmed'``) before it is used to join bounded,
+    independently-authorized result sets. Sources are referenced by connection
+    id ('default' for the primary target, otherwise a Connection row).
+    """
+    __tablename__ = "cross_source_mappings"
+
+    id = Column(String(36), primary_key=True, default=new_uuid)
+    left_connection_id = Column(String(36), nullable=False)
+    left_schema = Column(String(120), nullable=False)
+    left_table = Column(String(200), nullable=False)
+    left_column = Column(String(200), nullable=False)
+    right_connection_id = Column(String(36), nullable=False)
+    right_schema = Column(String(120), nullable=False)
+    right_table = Column(String(200), nullable=False)
+    right_column = Column(String(200), nullable=False)
+    status = Column(String(20), nullable=False, default="candidate")  # candidate, confirmed
+    confidence = Column(Float, nullable=False, default=0.0)
+    evidence = Column(JSON, default=dict)      # why the candidate was proposed
+    created_by = Column(String(80), nullable=False, default="executive")
+    confirmed_by = Column(String(80), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    __table_args__ = (
+        Index("idx_csm_left", "left_connection_id", "left_table"),
+        Index("idx_csm_right", "right_connection_id", "right_table"),
+        Index("idx_csm_status", "status"),
     )

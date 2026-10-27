@@ -179,6 +179,12 @@ tests/test_sql_safety.py::test_query_length_limit PASSED                 [100%]
 
 ---
 
+## 🔌 SAP S/4HANA Enterprise Connector (read-only OData)
+
+QueryPilot can register SAP S/4HANA sources (Public/Private Cloud, on-premise, hybrid) over released OData V2/V4 APIs with encrypted credentials, fail-closed SSRF allowlists, structured-plan policy validation (the LLM never emits URLs for SAP), role-based entity/column restrictions, bounded previews, and cross-source joins against PostgreSQL — all enforced server-side. See **[docs/SAP_S4HANA_CONNECTOR.md](docs/SAP_S4HANA_CONNECTOR.md)** for the architecture, admin guide, hybrid network prerequisites, live-SAP verification checklist, and an honest report of what has (150 automated tests, local OData protocol fixtures) and has not (live tenant) been verified.
+
+---
+
 ## 📂 Repository Layout
 
 ```
@@ -191,6 +197,7 @@ agent_db/
 │   │   ├── models.py              # SQLAlchemy persistence models
 │   │   ├── schemas.py             # Pydantic input/output schemas
 │   │   └── services/
+│   │       ├── connectors/            # Connector abstraction + sap_s4hana package (OData)
 │   │       ├── chart_service.py   # Heuristic-based dynamic chart selector
 │   │       ├── evaluation_runner.py# 31-case empirical evaluation harness
 │   │       ├── explanation_service.py # Grounded business explanation generator

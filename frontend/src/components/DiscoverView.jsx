@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Sparkles, Play, Activity, TrendingUp, TrendingDown, AlertTriangle, Target,
   Lightbulb, ShieldAlert, ChevronDown, ChevronUp, Search, Compass, X, Bookmark,
-  ArrowRight, RefreshCw,
+  ArrowRight, RefreshCw, Network, SlidersHorizontal,
 } from 'lucide-react';
 import PageHeader from './PageHeader';
 
@@ -79,7 +79,7 @@ function MiniBarChart({ data }) {
   );
 }
 
-function InsightCard({ finding, onExplore, onDismiss, onSave }) {
+function InsightCard({ finding, onExplore, onDismiss, onSave, onInvestigate, onSimulate }) {
   const [expanded, setExpanded] = useState(false);
   const sev = SEV_META[finding.severity] || SEV_META.info;
   const type = TYPE_META[finding.finding_type] || TYPE_META.trend;
@@ -179,7 +179,13 @@ function InsightCard({ finding, onExplore, onDismiss, onSave }) {
         )}
 
         <div style={{ display: 'flex', gap: '8px', marginTop: '14px', flexWrap: 'wrap' }}>
-          <button onClick={() => onExplore(finding.explore_question || finding.title)} className="btn-primary" style={{ padding: '7px 14px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem' }}>
+          <button onClick={() => onInvestigate && onInvestigate(finding.id)} className="btn-primary" style={{ padding: '7px 14px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem' }}>
+            <Network size={14} /> Open Investigation
+          </button>
+          <button onClick={() => onSimulate && onSimulate(finding.id)} style={{ padding: '7px 14px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', background: 'var(--bg-surface)', color: 'var(--copper-primary, #c27847)', border: '1px solid var(--border-card)', borderRadius: '8px', cursor: 'pointer' }}>
+            <SlidersHorizontal size={14} /> Simulate What-If
+          </button>
+          <button onClick={() => onExplore(finding.explore_question || finding.title)} style={{ padding: '7px 14px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', background: 'var(--bg-surface)', color: 'var(--teal-primary)', border: '1px solid var(--border-card)', borderRadius: '8px', cursor: 'pointer' }}>
             Explore Further <ArrowRight size={14} />
           </button>
           <button onClick={() => onSave(finding.id)} style={{ padding: '7px 12px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', background: finding.status === 'saved' ? 'rgba(17,94,89,0.12)' : 'var(--bg-surface)', color: 'var(--teal-primary)', border: '1px solid var(--border-card)', borderRadius: '8px', cursor: 'pointer' }}>
@@ -205,7 +211,7 @@ function EvidenceBlock({ title, tone, children }) {
   );
 }
 
-export default function DiscoverView({ onExploreFurther }) {
+export default function DiscoverView({ onExploreFurther, onOpenInvestigation, onSimulate }) {
   const [findings, setFindings] = useState([]);
   const [summary, setSummary] = useState({ critical: 0, warning: 0, watch: 0, info: 0 });
   const [runInfo, setRunInfo] = useState(null);
@@ -350,7 +356,7 @@ export default function DiscoverView({ onExploreFurther }) {
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: '1rem' }}>
           {visible.map((f) => (
-            <InsightCard key={f.id} finding={f} onExplore={onExploreFurther} onDismiss={handleDismiss} onSave={handleSave} />
+            <InsightCard key={f.id} finding={f} onExplore={onExploreFurther} onDismiss={handleDismiss} onSave={handleSave} onInvestigate={onOpenInvestigation} onSimulate={onSimulate} />
           ))}
         </div>
       )}

@@ -12,6 +12,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request, HTTPException, Depends, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +29,8 @@ from app.models import (
     Connection, QueryRecord, EvaluationRun, EvaluationResult,
     AuditEvent, BusinessGlossary, ConversationSession,
     DiscoveryRun, DiscoveryFinding,
+    Investigation, InvestigationBranch, RootCauseRun, Scenario, new_uuid,
+    Briefing, BriefingPreference, CrossSourceMapping,
 )
 from app.schemas import (
     HealthResponse, ReadinessResponse,
@@ -38,6 +41,7 @@ from app.schemas import (
     EvaluationRunCreate, EvaluationRunResponse, EvaluationRunDetailResponse, EvaluationResultResponse,
     AuditEventResponse, ErrorResponse,
     TargetDbSettingsUpdate, LlmSettingsUpdate, SettingsApplyResult,
+    SAPConnectionPayload, SAPConnectionCreate, SAPConnectionPatch, SAPPreviewRequest,
 )
 from app.services.llm_provider import LLMProvider
 from app.services.schema_service import SchemaService
@@ -47,6 +51,10 @@ from app.services.query_executor import QueryExecutor, ExecutionResult
 from app.services.chart_service import select_chart_type
 from app.services.explanation_service import ExplanationService
 from app.services.role_service import resolve_user_context, UserSecurityContext
+from app.services.crypto import encrypt_secret, decrypt_secret, reencrypt_if_needed
+from app.services.connectors.base import ConnectorContext, ConnectorError
+from app.services.connectors.net_security import UnsafeURLError, parse_allowed_hosts, validate_url
+from app.services.connectors.registry import build_connector
 from app.services.validation_service import (
     SchemaGroundingValidator, GroundingResult, build_evidence,
 )
@@ -139,6 +147,94 @@ def _ensure_startup_migrations():
                 ))
             logger.info("Migrated: added query_records.evidence column")
 
+    # SAP connector + credential-encryption columns on an existing connections table.
+    if "connections" in insp.get_table_names():
+        conn_cols = {c["name"] for c in insp.get_columns("connections")}
+        additive = {
+            "connector_type": "VARCHAR(30) NOT NULL DEFAULT 'postgresql'",
+            "deployment_type": "VARCHAR(30)",
+            "base_url": "VARCHAR(500)",
+            "service_path": "VARCHAR(500)",
+            "odata_version": "VARCHAR(5)",
+            "auth_mode": "VARCHAR(30)",
+            "secret_ref": "VARCHAR(300)",
+            "tls_verify": "BOOLEAN DEFAULT TRUE",
+            "lifecycle_status": "VARCHAR(20) DEFAULT 'configured'",
+            "last_success_at": "TIMESTAMP WITH TIME ZONE",
+            "metadata_json": "JSON",
+            "metadata_refreshed_at": "TIMESTAMP WITH TIME ZONE",
+            "updated_by": "VARCHAR(200)",
+        }
+        with engine.begin() as conn:
+            for col, ddl in additive.items():
+                if col not in conn_cols:
+                    conn.execute(text(f"ALTER TABLE connections ADD COLUMN IF NOT EXISTS {col} {ddl}"))
+                    logger.info("Migrated: added connections.%s column", col)
+        # Upgrade any legacy plaintext credentials to encrypted-at-rest form.
+        _upgrade_legacy_credentials()
+
+
+def _upgrade_legacy_credentials():
+    """Re-encrypt connection passwords that are still stored as plaintext."""
+    from app.database import get_app_session_factory
+    factory = get_app_session_factory()
+    db = factory()
+    try:
+        upgraded = 0
+        for c in db.query(Connection).all():
+            new_val = reencrypt_if_needed(c.encrypted_password)
+            if new_val != c.encrypted_password:
+                c.encrypted_password = new_val
+                upgraded += 1
+        if upgraded:
+            db.commit()
+            logger.info("Credential migration: encrypted %d connection secret(s)", upgraded)
+    except Exception as exc:  # pragma: no cover - defensive at startup
+        db.rollback()
+        logger.warning("Credential upgrade skipped: %s", exc)
+    finally:
+        db.close()
+
+
+def _ensure_secondary_source():
+    """Register the bootstrap second PostgreSQL source so the two-source
+    cross-system demo works out of the box. Admins can manage additional sources
+    through the Connections registry; this is idempotent and failure-tolerant.
+    """
+    settings = get_settings()
+    if not (settings.cross_source_enabled and settings.cross_source_secondary_enabled):
+        return
+    from app.database import get_app_session_factory
+    factory = get_app_session_factory()
+    db = factory()
+    try:
+        existing = db.query(Connection).filter(
+            Connection.database_name == settings.cross_source_secondary_db,
+            Connection.schema_name == settings.cross_source_secondary_schema,
+            Connection.is_active == True,  # noqa: E712
+        ).first()
+        if existing:
+            return
+        conn = Connection(
+            name=settings.cross_source_secondary_name,
+            db_type="postgresql",
+            host=settings.cross_source_secondary_host,
+            port=settings.cross_source_secondary_port,
+            database_name=settings.cross_source_secondary_db,
+            username=settings.cross_source_secondary_user,
+            encrypted_password=encrypt_secret(settings.cross_source_secondary_password),  # encrypted at rest
+            schema_name=settings.cross_source_secondary_schema,
+            owner_user="system",
+        )
+        db.add(conn)
+        db.commit()
+        logger.info("Registered secondary cross-source: %s", conn.name)
+    except Exception as exc:  # pragma: no cover - defensive at startup
+        db.rollback()
+        logger.warning("Secondary source bootstrap skipped: %s", exc)
+    finally:
+        db.close()
+
 
 # ---------------------------------------------------------------------------
 # App lifecycle
@@ -160,6 +256,15 @@ async def lifespan(app: FastAPI):
 
     # Start proactive discovery scheduler (Discover & Early Warnings)
     _start_discovery_scheduler()
+
+    # Start personalized briefing scheduler (Feature 4)
+    _start_briefing_scheduler()
+
+    # Register the bootstrap second data source (Feature 5 Cross-System Intelligence)
+    try:
+        _ensure_secondary_source()
+    except Exception as e:  # pragma: no cover - defensive
+        logger.warning("Cross-source bootstrap failed: %s", e)
 
     yield
 
@@ -276,7 +381,7 @@ async def create_connection(req: ConnectionCreate, db: Session = Depends(get_app
         port=req.port,
         database_name=req.database_name,
         username=req.username,
-        encrypted_password=req.password,  # TODO: encrypt with Fernet
+        encrypted_password=encrypt_secret(req.password),  # encrypted at rest (Fernet envelope)
         schema_name=req.schema_name,
     )
     db.add(conn)
@@ -318,12 +423,29 @@ async def get_connection_schema(conn_id: str, db: Session = Depends(get_app_db))
         engine = get_target_engine()
         schema_name = "sales"
     elif conn:
+        if getattr(conn, "connector_type", "postgresql") == "sap_s4hana":
+            # SAP rows expose their cached OData descriptor through the SAME
+            # schema endpoint, so the Schema Catalog stays source-neutral.
+            cached = conn.metadata_json or {}
+            if "entities" not in cached:
+                raise HTTPException(status_code=409, detail="Schema not discovered yet — use POST /schema/refresh")
+            return JSONResponse({
+                "connection_id": conn.id,
+                "name": conn.name,
+                "connector_type": "sap_s4hana",
+                "schema_label": "sap",
+                "source_version": cached.get("source_version", ""),
+                "discovered_at": str(conn.metadata_refreshed_at or ""),
+                "entity_count": len(cached.get("entities", [])),
+                "entities": cached.get("entities", []),
+                "notes": cached.get("notes", []),
+            })
         engine = create_target_engine(
             host=conn.host,
             port=conn.port,
             dbname=conn.database_name,
             user=conn.username,
-            password=conn.encrypted_password,
+            password=decrypt_secret(conn.encrypted_password),
         )
         schema_name = conn.schema_name or "public"
     else:
@@ -331,6 +453,372 @@ async def get_connection_schema(conn_id: str, db: Session = Depends(get_app_db))
 
     schema_svc = get_schema_service()
     return schema_svc.discover_schema(engine, conn_id, schema_name)
+
+
+# ============================================================================
+# SAP S/4HANA CONNECTOR ENDPOINTS
+# ============================================================================
+
+_SAP_PREVIEW_WINDOW_SECONDS = 60.0
+_SAP_PREVIEW_MAX_PER_WINDOW = 30
+_sap_preview_hits: dict[str, list[float]] = {}
+
+
+def _require_sap_admin(request: Request) -> UserSecurityContext:
+    """Server-side authz for SAP connection management: executive/admin only.
+    Frontend hiding is NOT a control — every admin endpoint checks here."""
+    role_header = request.headers.get("X-User-Role")
+    user_header = request.headers.get("X-Username")
+    ctx = resolve_user_context(role_or_username=(user_header or role_header or "executive"),
+                               explicit_role=role_header)
+    if ctx.role != "executive":
+        raise HTTPException(status_code=403, detail="Only administrators may manage SAP connections")
+    return ctx
+
+
+def _sap_settings_guard(base_url: str, service_path: str, token_url: Optional[str]) -> None:
+    """Fail-closed allowlist validation at the API surface (belt + suspenders:
+    the connector client re-validates every final URL including redirects)."""
+    settings = get_settings()
+    allowed = parse_allowed_hosts(settings.sap_allowed_hosts)
+    joined = base_url.rstrip("/") + ("/" + service_path.strip("/") if service_path.strip("/") else "")
+    try:
+        validate_url(joined, allowed)
+        if token_url:
+            validate_url(token_url, allowed)
+    except UnsafeURLError as exc:
+        raise HTTPException(status_code=400, detail=f"SAP target not permitted: {exc}")
+
+
+def _sap_error_status(exc: ConnectorError) -> int:
+    return {
+        "configuration_error": 400,
+        "policy_violation": 403,
+        "permission_denied": 403,
+        "authentication_error": 502,
+        "connection_error": 502,
+        "not_found": 404,
+        "size_limit": 413,
+        "api_error": 502,
+        "protocol_error": 502,
+    }.get(exc.category, 500)
+
+
+def _get_sap_connection(conn_id: str, db: Session) -> Connection:
+    conn = db.query(Connection).filter(
+        Connection.id == conn_id, Connection.is_active == True  # noqa: E712
+    ).first()
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    if getattr(conn, "connector_type", "postgresql") != "sap_s4hana":
+        raise HTTPException(status_code=400, detail="Not a SAP S/4HANA connection")
+    return conn
+
+
+def _sap_context_from_payload(payload: SAPConnectionPayload, connection_id: str) -> ConnectorContext:
+    settings = get_settings()
+    return ConnectorContext(
+        connection_id=connection_id,
+        name=payload.secret_ref or connection_id,
+        deployment_type=payload.deployment_type,
+        base_url=payload.base_url.rstrip("/"),
+        service_path=payload.service_path or "",
+        odata_version=payload.odata_version,
+        auth_mode=payload.auth_mode,
+        username=payload.username or "",
+        secret=payload.secret,
+        client_id=payload.oauth_client_id,
+        scope=payload.oauth_scope,
+        token_url=payload.oauth_token_url,
+        tls_verify=payload.tls_verify,
+        allowed_hosts=parse_allowed_hosts(settings.sap_allowed_hosts),
+        timeout_seconds=min(settings.sap_default_timeout_seconds, settings.sap_max_timeout_seconds),
+        max_records=settings.sap_max_records_fetched,
+        page_size=settings.sap_default_page_size,
+        max_response_bytes=settings.sap_max_response_bytes,
+        max_retries=settings.sap_max_retries,
+        backoff_base=settings.sap_backoff_base_seconds,
+        backoff_max=settings.sap_backoff_max_seconds,
+    )
+
+
+def _sap_adapter(ctx: ConnectorContext):
+    from app.services.connectors.sap_s4hana.adapter import SAPS4hanaConnector
+    return SAPS4hanaConnector(ctx)
+
+
+def _rate_limit_preview(conn_id: str) -> None:
+    now = time.time()
+    hits = [t for t in _sap_preview_hits.get(conn_id, []) if now - t < _SAP_PREVIEW_WINDOW_SECONDS]
+    if len(hits) >= _SAP_PREVIEW_MAX_PER_WINDOW:
+        raise HTTPException(status_code=429, detail="SAP preview rate limit exceeded; try again shortly")
+    hits.append(now)
+    _sap_preview_hits[conn_id] = hits
+
+
+@app.post("/api/v1/connections/sap/test", tags=["SAP Connector"])
+async def sap_test_connection(req: SAPConnectionPayload, request: Request):
+    """Ad-hoc connectivity + auth probe. Nothing is persisted; secrets are
+    never echoed back."""
+    _require_sap_admin(request)
+    _sap_settings_guard(req.base_url, req.service_path, req.oauth_token_url)
+    adapter = _sap_adapter(_sap_context_from_payload(req, "ad-hoc"))
+    result = adapter.test_connection()
+    return result
+
+
+@app.post("/api/v1/connections/sap", response_model=ConnectionResponse, tags=["SAP Connector"])
+async def create_sap_connection(req: SAPConnectionCreate, request: Request, db: Session = Depends(get_app_db)):
+    """Register a SAP S/4HANA connection in the shared Connection registry."""
+    user = _require_sap_admin(request)
+    _sap_settings_guard(req.base_url, req.service_path, req.oauth_token_url)
+    parts = urlsplit(req.base_url)
+    conn = Connection(
+        name=req.name,
+        db_type="sap_odata",
+        connector_type="sap_s4hana",
+        host=(parts.hostname or "").lower(),
+        port=parts.port or (443 if parts.scheme == "https" else 80),
+        database_name=(req.service_path or "/")[:200],
+        username=req.username or (req.oauth_client_id or ""),
+        encrypted_password=encrypt_secret(req.secret),  # encrypted at rest
+        schema_name="sap",
+        deployment_type=req.deployment_type,
+        base_url=req.base_url.rstrip("/"),
+        service_path=req.service_path,
+        odata_version=req.odata_version,
+        auth_mode=req.auth_mode,
+        secret_ref=req.secret_ref or "credential-store",
+        tls_verify=req.tls_verify,
+        lifecycle_status="configured",
+        owner_user=user.username,
+        updated_by=user.username,
+        metadata_json={"options": {
+            "oauth_client_id": req.oauth_client_id,
+            "oauth_scope": req.oauth_scope,
+            "oauth_token_url": req.oauth_token_url,
+        }},
+    )
+    db.add(conn)
+    db.commit()
+    db.refresh(conn)
+    _audit(db, "connection.sap.created", "connection", conn.id,
+           {"name": req.name, "deployment": req.deployment_type, "auth_mode": req.auth_mode,
+            "odata_version": req.odata_version})
+    return ConnectionResponse.model_validate(conn)
+
+
+@app.get("/api/v1/connections/{conn_id}/health", tags=["SAP Connector"])
+async def sap_health(conn_id: str, request: Request, db: Session = Depends(get_app_db)):
+    """Live health probe; persists the resulting lifecycle state."""
+    _require_sap_admin(request)
+    conn = _get_sap_connection(conn_id, db)
+    try:
+        connector = build_connector(conn)
+        connector.hydrate_from_cache(conn.metadata_json)
+        status = connector.get_health_status()
+    except ConnectorError as exc:
+        raise HTTPException(status_code=_sap_error_status(exc), detail=exc.message)
+    conn.test_status = "ok" if status["healthy"] else "degraded"
+    conn.lifecycle_status = "connected" if status["healthy"] else "degraded"
+    if status["healthy"]:
+        conn.last_success_at = datetime.now(timezone.utc)
+    conn.last_tested_at = datetime.now(timezone.utc)
+    db.commit()
+    return status
+
+
+@app.get("/api/v1/connections/{conn_id}/services", tags=["SAP Connector"])
+async def sap_services(conn_id: str, request: Request, db: Session = Depends(get_app_db)):
+    """Discovered OData services from the metadata cache."""
+    _require_sap_admin(request)
+    conn = _get_sap_connection(conn_id, db)
+    cached = conn.metadata_json or {}
+    if "entities" not in cached:
+        raise HTTPException(status_code=409, detail="Schema not discovered yet — use POST /schema/refresh")
+    return {"services": cached.get("services", []), "refreshed_at": str(conn.metadata_refreshed_at or "")}
+
+
+@app.post("/api/v1/connections/{conn_id}/schema/refresh", tags=["SAP Connector"])
+async def sap_schema_refresh(conn_id: str, request: Request, db: Session = Depends(get_app_db)):
+    """Admin-triggered live discovery: parse $metadata, cache it, and report
+    changes versus the previous snapshot."""
+    user = _require_sap_admin(request)
+    conn = _get_sap_connection(conn_id, db)
+    try:
+        connector = build_connector(conn)
+        descriptor = connector.discover_schema(force_refresh=True)
+    except ConnectorError as exc:
+        conn.lifecycle_status = "degraded"
+        db.commit()
+        raise HTTPException(status_code=_sap_error_status(exc), detail=exc.message)
+
+    from app.services.connectors.sap_s4hana.metadata import descriptor_to_dict
+    payload = descriptor_to_dict(descriptor.services, descriptor.entities,
+                                 descriptor.source_version, descriptor.notes)
+    options = (conn.metadata_json or {}).get("options")
+    payload["options"] = options or {}
+
+    previous = conn.metadata_json or {}
+    prev_names = {e.get("name") for e in previous.get("entities", [])}
+    new_names = {e.name for e in descriptor.entities}
+    changes = {
+        "added": sorted(new_names - prev_names),
+        "removed": sorted(prev_names - new_names),
+        "unchanged": len(new_names & prev_names),
+    }
+
+    conn.metadata_json = payload
+    conn.metadata_refreshed_at = datetime.now(timezone.utc)
+    conn.lifecycle_status = "connected"
+    conn.last_success_at = datetime.now(timezone.utc)
+    conn.updated_by = user.username
+    db.commit()
+    _audit(db, "connection.sap.schema_refresh", "connection", conn.id,
+           {"entities": len(new_names), "added": changes["added"], "removed": changes["removed"]})
+    return {
+        "connection_id": conn.id,
+        "entity_count": len(new_names),
+        "service_count": len(descriptor.services),
+        "source_version": descriptor.source_version,
+        "changes": changes,
+        "refreshed_at": str(conn.metadata_refreshed_at),
+    }
+
+
+@app.get("/api/v1/connections/{conn_id}/entities", tags=["SAP Connector"])
+async def sap_entities(conn_id: str, request: Request, db: Session = Depends(get_app_db)):
+    """Entity summaries (name, keys, field count) from the cache."""
+    _require_sap_admin(request)
+    conn = _get_sap_connection(conn_id, db)
+    cached = conn.metadata_json or {}
+    if "entities" not in cached:
+        raise HTTPException(status_code=409, detail="Schema not discovered yet — use POST /schema/refresh")
+    return {
+        "entities": [
+            {
+                "name": e["name"],
+                "entity_type": e.get("entity_type", ""),
+                "keys": e.get("keys", []),
+                "field_count": len(e.get("properties", [])),
+                "navigation": e.get("navigation", []),
+                "count": e.get("count"),
+            } for e in cached["entities"]
+        ]
+    }
+
+
+@app.get("/api/v1/connections/{conn_id}/entities/{entity}/metadata", tags=["SAP Connector"])
+async def sap_entity_metadata(conn_id: str, entity: str, request: Request, db: Session = Depends(get_app_db)):
+    """Full property table for one entity set (no live call, no secrets)."""
+    _require_sap_admin(request)
+    conn = _get_sap_connection(conn_id, db)
+    cached = conn.metadata_json or {}
+    meta = next((e for e in cached.get("entities", []) if e.get("name") == entity), None)
+    if meta is None:
+        raise HTTPException(status_code=404, detail=f"Entity '{entity}' not in discovered SAP metadata")
+    return meta
+
+
+@app.post("/api/v1/connections/{conn_id}/entities/{entity}/preview", tags=["SAP Connector"])
+async def sap_entity_preview(conn_id: str, entity: str, req: SAPPreviewRequest,
+                             request: Request, db: Session = Depends(get_app_db)):
+    """Bounded, role-authorized record preview. The structured plan is
+    validated against metadata + role policy BEFORE any HTTP call."""
+    role_header = request.headers.get("X-User-Role")
+    user_header = request.headers.get("X-Username")
+    user_ctx = resolve_user_context(role_or_username=(user_header or role_header or "executive"),
+                                    explicit_role=role_header)
+    conn = _get_sap_connection(conn_id, db)
+    _rate_limit_preview(conn_id)
+    try:
+        connector = build_connector(conn)
+        if not connector.hydrate_from_cache(conn.metadata_json):
+            connector.discover_schema()
+        result = connector.fetch_records(
+            entity,
+            select=req.select,
+            filter_plan=req.filter,
+            orderby=req.orderby,
+            top=min(req.top or 50, get_settings().sap_max_records_fetched),
+            role=user_ctx.role,
+        )
+    except ConnectorError as exc:
+        _audit(db, "connection.sap.preview_blocked", "connection", conn.id,
+               {"entity": entity, "role": user_ctx.role, "category": exc.category})
+        raise HTTPException(status_code=_sap_error_status(exc), detail=exc.message)
+    _audit(db, "connection.sap.preview", "connection", conn.id,
+           {"entity": entity, "role": user_ctx.role, "rows": result.row_count,
+            "truncated": result.truncated, "user": user_ctx.username})
+    return {
+        "success": result.success,
+        "columns": result.columns,
+        "rows": result.rows,
+        "row_count": result.row_count,
+        "truncated": result.truncated,
+        "execution_time_ms": result.execution_time_ms,
+        "source": {"connection_id": conn.id, "name": conn.name, "entity": entity},
+        "applied": {"select": req.select, "filter": req.filter, "orderby": req.orderby,
+                    "role": user_ctx.role},
+        "limitations": (
+            "Preview shows a bounded, role-authorized subset retrieved from SAP — "
+            "it is not the complete entity, and SAP-side authorizations of the "
+            "integration identity were applied IN ADDITION to QueryPilot policy."
+        ),
+    }
+
+
+@app.patch("/api/v1/connections/{conn_id}", response_model=ConnectionResponse, tags=["SAP Connector"])
+async def patch_sap_connection(conn_id: str, req: SAPConnectionPatch, request: Request,
+                               db: Session = Depends(get_app_db)):
+    """Admin update of non-secret settings; `secret` rotates the credential."""
+    user = _require_sap_admin(request)
+    conn = _get_sap_connection(conn_id, db)
+    if req.secret:
+        conn.encrypted_password = encrypt_secret(req.secret)
+    if req.service_path is not None:
+        conn.service_path = req.service_path
+    if req.odata_version is not None:
+        conn.odata_version = req.odata_version
+    if req.auth_mode is not None:
+        conn.auth_mode = req.auth_mode
+    if req.username is not None:
+        conn.username = req.username
+    if req.tls_verify is not None:
+        conn.tls_verify = req.tls_verify
+    if req.secret_ref is not None:
+        conn.secret_ref = req.secret_ref
+    options = dict((conn.metadata_json or {}).get("options") or {})
+    if req.oauth_client_id is not None:
+        options["oauth_client_id"] = req.oauth_client_id
+    if req.oauth_scope is not None:
+        options["oauth_scope"] = req.oauth_scope
+    if req.oauth_token_url is not None:
+        _sap_settings_guard(conn.base_url, conn.service_path or "", req.oauth_token_url)
+        options["oauth_token_url"] = req.oauth_token_url
+    cached = dict(conn.metadata_json or {})
+    cached["options"] = options
+    conn.metadata_json = cached
+    conn.updated_by = user.username
+    db.commit()
+    db.refresh(conn)
+    _audit(db, "connection.sap.patched", "connection", conn.id,
+           {"fields": [k for k, v in req.model_dump().items() if v is not None and k != "secret"],
+            "secret_rotated": bool(req.secret)})
+    return ConnectionResponse.model_validate(conn)
+
+
+@app.post("/api/v1/connections/{conn_id}/disable", tags=["SAP Connector"])
+async def disable_sap_connection(conn_id: str, request: Request, db: Session = Depends(get_app_db)):
+    """Soft-disable a SAP connection (revokes QueryPilot-side availability)."""
+    user = _require_sap_admin(request)
+    conn = _get_sap_connection(conn_id, db)
+    conn.is_active = False
+    conn.lifecycle_status = "disabled"
+    conn.updated_by = user.username
+    db.commit()
+    _audit(db, "connection.sap.disabled", "connection", conn_id, {})
+    return {"status": "disabled", "connection_id": conn_id}
 
 
 # ============================================================================
@@ -401,9 +889,15 @@ async def submit_query(req: QueryRequest, request: Request, db: Session = Depend
             ).first()
             if not conn:
                 raise HTTPException(status_code=404, detail="Connection not found")
+            if getattr(conn, "connector_type", "postgresql") == "sap_s4hana":
+                raise HTTPException(status_code=400, detail=(
+                    "SAP sources cannot be queried with SQL. Use the SAP entity "
+                    "preview/cross-source join endpoints, which enforce the OData "
+                    "policy boundary."
+                ))
             engine = create_target_engine(
                 host=conn.host, port=conn.port, dbname=conn.database_name,
-                user=conn.username, password=conn.encrypted_password,
+                user=conn.username, password=decrypt_secret(conn.encrypted_password),
             )
             schema_name = conn.schema_name or "public"
 
@@ -1588,6 +2082,833 @@ async def save_discovery_finding(finding_id: str, db: Session = Depends(get_app_
     f.status = "saved"
     db.commit()
     return {"status": "saved", "id": f.id}
+
+
+# ============================================================================
+# FEATURE 1 + 3: MULTI-THREAD INVESTIGATION WORKSPACE + ROOT-CAUSE ENGINE
+# ============================================================================
+
+from typing import List as _List
+
+
+class InvestigationCreate(_DiscoveryBaseModel):
+    finding_id: Optional[str] = None
+    title: Optional[str] = None
+    root_question: Optional[str] = None
+    role: Optional[str] = None
+    run_root_cause: bool = True
+
+
+class BranchCreate(_DiscoveryBaseModel):
+    title: Optional[str] = None
+    question: Optional[str] = None
+    parent_branch_id: Optional[str] = None
+    origin: str = "manual"
+    contributor_segment: Optional[str] = None
+
+
+class BranchUpdate(_DiscoveryBaseModel):
+    title: Optional[str] = None
+    status: Optional[str] = None
+
+
+class BranchConclusion(_DiscoveryBaseModel):
+    conclusion: str
+
+
+class CompareRequest(_DiscoveryBaseModel):
+    branch_ids: _List[str]
+
+
+class RootCauseRequest(_DiscoveryBaseModel):
+    finding_id: Optional[str] = None
+    investigation_id: Optional[str] = None
+    spawn_branches: bool = True
+    role: Optional[str] = None
+
+
+def _new_branch(db: Session, inv: Investigation, *, title: str, question: Optional[str],
+                origin: str, parent_branch_id: Optional[str], segment: Optional[str],
+                role: str) -> InvestigationBranch:
+    """Create a branch with its OWN conversation session (independent context)."""
+    session_id = f"sess_{uuid.uuid4().hex[:12]}"
+    db.add(ConversationSession(
+        id=session_id, user_role=role, title=(question or title)[:60], turns=[], turn_count=0,
+    ))
+    branch = InvestigationBranch(
+        id=new_uuid(), investigation_id=inv.id, parent_branch_id=parent_branch_id,
+        title=title[:300], seed_question=question, session_id=session_id,
+        origin=origin, contributor_segment=segment, status="open",
+    )
+    db.add(branch)
+    return branch
+
+
+def _serialize_branch(b: InvestigationBranch) -> dict:
+    return {
+        "id": b.id, "investigation_id": b.investigation_id, "parent_branch_id": b.parent_branch_id,
+        "title": b.title, "seed_question": b.seed_question, "session_id": b.session_id,
+        "origin": b.origin, "contributor_segment": b.contributor_segment, "status": b.status,
+        "conclusion": b.conclusion,
+        "created_at": b.created_at.isoformat() if b.created_at else None,
+        "updated_at": b.updated_at.isoformat() if b.updated_at else None,
+    }
+
+
+def _serialize_rcrun(r: RootCauseRun) -> dict:
+    return {
+        "id": r.id, "investigation_id": r.investigation_id, "finding_id": r.finding_id,
+        "metric_name": r.metric_name, "measure_expr": r.measure_expr,
+        "dimension_label": r.dimension_label, "dimension_column": r.dimension_column,
+        "baseline_period": r.baseline_period, "current_period": r.current_period,
+        "baseline_total": r.baseline_total, "current_total": r.current_total,
+        "total_change_abs": r.total_change_abs, "total_change_pct": r.total_change_pct,
+        "reconciles": r.reconciles, "contributions": r.contributions or [],
+        "evidence": r.evidence or {}, "role": r.role,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+    }
+
+
+def _branch_turns(db: Session, branch: InvestigationBranch) -> _List[dict]:
+    """Evidence for a branch = the QueryRecords executed under its session."""
+    if not branch.session_id:
+        return []
+    records = db.query(QueryRecord).filter(
+        QueryRecord.session_id == branch.session_id
+    ).order_by(QueryRecord.created_at.asc()).all()
+    return [
+        {
+            "id": rec.id, "question": rec.natural_language_query, "sql": rec.validated_sql or rec.generated_sql,
+            "status": rec.status, "row_count": rec.result_row_count,
+            "columns": rec.result_columns or [], "rows": (rec.result_data or [])[:50],
+            "explanation": rec.explanation, "chart_spec": rec.chart_spec, "evidence": rec.evidence,
+            "created_at": rec.created_at.isoformat() if rec.created_at else None,
+        }
+        for rec in records
+    ]
+
+
+def _investigation_payload(db: Session, inv: Investigation) -> dict:
+    branches = db.query(InvestigationBranch).filter(
+        InvestigationBranch.investigation_id == inv.id
+    ).order_by(InvestigationBranch.created_at.asc()).all()
+    runs = db.query(RootCauseRun).filter(
+        RootCauseRun.investigation_id == inv.id
+    ).order_by(RootCauseRun.created_at.desc()).all()
+    return {
+        "id": inv.id, "finding_id": inv.finding_id, "title": inv.title,
+        "root_question": inv.root_question, "narrative": inv.narrative,
+        "role": inv.role, "status": inv.status,
+        "branch_count": len(branches),
+        "branches": [_serialize_branch(b) for b in branches],
+        "root_cause_runs": [_serialize_rcrun(r) for r in runs],
+        "created_at": inv.created_at.isoformat() if inv.created_at else None,
+        "updated_at": inv.updated_at.isoformat() if inv.updated_at else None,
+    }
+
+
+@app.post("/api/v1/investigations", tags=["Investigations"])
+async def create_investigation(req: InvestigationCreate, db: Session = Depends(get_app_db)):
+    """Open a finding (or a free-form question) as a new multi-branch investigation."""
+    finding = None
+    if req.finding_id:
+        finding = db.query(DiscoveryFinding).filter(DiscoveryFinding.id == req.finding_id).first()
+        if not finding:
+            raise HTTPException(status_code=404, detail="Finding not found")
+
+    role = req.role or (finding.role if finding else None) or "executive"
+    title = req.title or (f"Investigation: {finding.title[:80]}" if finding else "New Investigation")
+    root_q = req.root_question or (finding.explore_question if finding and finding.explore_question else (finding.title if finding else title))
+
+    inv = Investigation(
+        id=new_uuid(), finding_id=(finding.id if finding else None), title=title[:300],
+        root_question=root_q, narrative=(finding.narrative if finding else None), role=role, status="open",
+    )
+    db.add(inv)
+    db.commit()
+    db.refresh(inv)
+
+    root_branch = _new_branch(db, inv, title="Original investigation", question=root_q,
+                              origin="finding" if finding else "manual",
+                              parent_branch_id=None, segment=None, role=role)
+    db.commit()
+
+    rc_summary = None
+    if finding and req.run_root_cause:
+        try:
+            from app.services.root_cause_service import RootCauseService
+            result = RootCauseService(role=role).analyze_finding(finding)
+            run = RootCauseRun(
+                id=new_uuid(), investigation_id=inv.id, finding_id=finding.id,
+                metric_name=result.get("metric_name"), measure_expr=result.get("measure_expr"),
+                dimension_label=result.get("dimension_label"), dimension_column=result.get("dimension_column"),
+                baseline_period=result.get("baseline_period"), current_period=result.get("current_period"),
+                baseline_total=result.get("baseline_total"), current_total=result.get("current_total"),
+                total_change_abs=result.get("total_change_abs"), total_change_pct=result.get("total_change_pct"),
+                reconciles=bool(result.get("reconciles")), contributions=result.get("contributions", []),
+                evidence={**result.get("evidence", {}), "summary": result.get("summary")}, role=role,
+            )
+            db.add(run)
+            db.commit()
+            rc_summary = result
+            if result.get("status") == "ok":
+                for sb in result.get("suggested_branches", []):
+                    _new_branch(db, inv, title=sb["title"], question=sb["question"], origin="root_cause",
+                                parent_branch_id=root_branch.id, segment=sb.get("contributor_segment"), role=role)
+                db.commit()
+        except Exception as exc:
+            logger.error("Root-cause on investigation create failed: %s", exc, exc_info=True)
+            db.rollback()
+
+    _audit(db, "investigation.created", "investigation", inv.id,
+           {"finding_id": inv.finding_id, "role": role, "branch_count": inv and len(inv.branches or [])})
+    payload = _investigation_payload(db, inv)
+    payload["root_cause_summary"] = rc_summary.get("summary") if rc_summary else None
+    return payload
+
+
+@app.get("/api/v1/investigations", tags=["Investigations"])
+async def list_investigations(status: str = Query(default="active"), limit: int = Query(default=50, ge=1, le=200),
+                              db: Session = Depends(get_app_db)):
+    q = db.query(Investigation)
+    if status == "active":
+        q = q.filter(Investigation.status != "archived")
+    elif status in ("archived",):
+        q = q.filter(Investigation.status == status)
+    items = q.order_by(Investigation.updated_at.desc()).limit(limit).all()
+    return {
+        "count": len(items),
+        "investigations": [
+            {
+                "id": i.id, "title": i.title, "finding_id": i.finding_id, "role": i.role,
+                "status": i.status, "branch_count": len(i.branches or []),
+                "created_at": i.created_at.isoformat() if i.created_at else None,
+                "updated_at": i.updated_at.isoformat() if i.updated_at else None,
+            }
+            for i in items
+        ],
+    }
+
+
+@app.get("/api/v1/investigations/{inv_id}", tags=["Investigations"])
+async def get_investigation(inv_id: str, db: Session = Depends(get_app_db)):
+    inv = db.query(Investigation).filter(Investigation.id == inv_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    return _investigation_payload(db, inv)
+
+
+@app.post("/api/v1/investigations/{inv_id}/branches", tags=["Investigations"])
+async def add_branch(inv_id: str, req: BranchCreate, db: Session = Depends(get_app_db)):
+    """Create a parallel branch (independent context) under an investigation."""
+    inv = db.query(Investigation).filter(Investigation.id == inv_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    if req.parent_branch_id:
+        parent = db.query(InvestigationBranch).filter(InvestigationBranch.id == req.parent_branch_id).first()
+        if not parent or parent.investigation_id != inv.id:
+            raise HTTPException(status_code=404, detail="Parent branch not found in this investigation")
+    title = req.title or (req.question[:60] if req.question else "New hypothesis")
+    branch = _new_branch(db, inv, title=title, question=req.question, origin=req.origin,
+                         parent_branch_id=req.parent_branch_id, segment=req.contributor_segment, role=inv.role)
+    inv.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    _audit(db, "investigation.branch_added", "investigation", inv.id, {"branch_id": branch.id, "origin": req.origin})
+    return _serialize_branch(branch)
+
+
+@app.get("/api/v1/investigations/{inv_id}/branches/{branch_id}/turns", tags=["Investigations"])
+async def get_branch_turns(inv_id: str, branch_id: str, db: Session = Depends(get_app_db)):
+    """Evidence panel for a branch: SQL, source, filters, result rows, chart."""
+    branch = db.query(InvestigationBranch).filter(
+        InvestigationBranch.id == branch_id, InvestigationBranch.investigation_id == inv_id
+    ).first()
+    if not branch:
+        raise HTTPException(status_code=404, detail="Branch not found")
+    return {"branch": _serialize_branch(branch), "turns": _branch_turns(db, branch)}
+
+
+@app.patch("/api/v1/investigations/{inv_id}/branches/{branch_id}", tags=["Investigations"])
+async def update_branch(inv_id: str, branch_id: str, req: BranchUpdate, db: Session = Depends(get_app_db)):
+    branch = db.query(InvestigationBranch).filter(
+        InvestigationBranch.id == branch_id, InvestigationBranch.investigation_id == inv_id
+    ).first()
+    if not branch:
+        raise HTTPException(status_code=404, detail="Branch not found")
+    if req.title:
+        branch.title = req.title[:300]
+    if req.status in ("open", "archived"):
+        branch.status = req.status
+    db.commit()
+    return _serialize_branch(branch)
+
+
+@app.post("/api/v1/investigations/{inv_id}/branches/{branch_id}/conclusion", tags=["Investigations"])
+async def save_branch_conclusion(inv_id: str, branch_id: str, req: BranchConclusion, db: Session = Depends(get_app_db)):
+    branch = db.query(InvestigationBranch).filter(
+        InvestigationBranch.id == branch_id, InvestigationBranch.investigation_id == inv_id
+    ).first()
+    if not branch:
+        raise HTTPException(status_code=404, detail="Branch not found")
+    branch.conclusion = req.conclusion
+    db.commit()
+    return _serialize_branch(branch)
+
+
+@app.post("/api/v1/investigations/{inv_id}/compare", tags=["Investigations"])
+async def compare_branches(inv_id: str, req: CompareRequest, db: Session = Depends(get_app_db)):
+    """Side-by-side comparison of the latest completed result per branch."""
+    inv = db.query(Investigation).filter(Investigation.id == inv_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    comparison = []
+    for bid in req.branch_ids:
+        branch = db.query(InvestigationBranch).filter(
+            InvestigationBranch.id == bid, InvestigationBranch.investigation_id == inv_id
+        ).first()
+        if not branch:
+            continue
+        turns = _branch_turns(db, branch)
+        completed = [t for t in turns if t["status"] == "completed"]
+        latest = completed[-1] if completed else (turns[-1] if turns else None)
+        comparison.append({
+            "branch_id": branch.id, "title": branch.title, "conclusion": branch.conclusion,
+            "turn_count": len(turns),
+            "latest": None if not latest else {
+                "question": latest["question"], "sql": latest["sql"], "status": latest["status"],
+                "row_count": latest["row_count"], "columns": latest["columns"], "rows": latest["rows"][:5],
+            },
+        })
+    return {"investigation_id": inv_id, "compared": len(comparison), "branches": comparison}
+
+
+@app.post("/api/v1/root-cause/runs", tags=["Root Cause"])
+async def run_root_cause(req: RootCauseRequest, db: Session = Depends(get_app_db)):
+    """Run a schema-adaptive decomposition for a finding; persist ranked
+    contributions and (optionally) spawn follow-up branches."""
+    if not req.finding_id:
+        raise HTTPException(status_code=400, detail="finding_id is required")
+    finding = db.query(DiscoveryFinding).filter(DiscoveryFinding.id == req.finding_id).first()
+    if not finding:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    role = req.role or finding.role or "executive"
+    try:
+        from app.services.root_cause_service import RootCauseService
+        result = RootCauseService(role=role).analyze_finding(finding)
+    except Exception as exc:
+        logger.error("Root-cause run failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Root-cause analysis failed: {str(exc)[:200]}")
+
+    run = RootCauseRun(
+        id=new_uuid(), investigation_id=req.investigation_id, finding_id=finding.id,
+        metric_name=result.get("metric_name"), measure_expr=result.get("measure_expr"),
+        dimension_label=result.get("dimension_label"), dimension_column=result.get("dimension_column"),
+        baseline_period=result.get("baseline_period"), current_period=result.get("current_period"),
+        baseline_total=result.get("baseline_total"), current_total=result.get("current_total"),
+        total_change_abs=result.get("total_change_abs"), total_change_pct=result.get("total_change_pct"),
+        reconciles=bool(result.get("reconciles")), contributions=result.get("contributions", []),
+        evidence={**result.get("evidence", {}), "summary": result.get("summary")}, role=role,
+    )
+    db.add(run)
+    spawned = []
+    if req.investigation_id and req.spawn_branches and result.get("status") == "ok":
+        inv = db.query(Investigation).filter(Investigation.id == req.investigation_id).first()
+        if inv:
+            root_branch = db.query(InvestigationBranch).filter(
+                InvestigationBranch.investigation_id == inv.id, InvestigationBranch.parent_branch_id.is_(None)
+            ).order_by(InvestigationBranch.created_at.asc()).first()
+            for sb in result.get("suggested_branches", []):
+                b = _new_branch(db, inv, title=sb["title"], question=sb["question"], origin="root_cause",
+                                parent_branch_id=(root_branch.id if root_branch else None),
+                                segment=sb.get("contributor_segment"), role=role)
+                spawned.append(_serialize_branch(b))
+    db.commit()
+    _audit(db, "rootcause.run", "root_cause_run", run.id,
+           {"finding_id": finding.id, "status": result.get("status"), "role": role})
+    payload = _serialize_rcrun(run)
+    payload["summary"] = result.get("summary")
+    payload["suggested_branches"] = result.get("suggested_branches", [])
+    payload["spawned_branches"] = spawned
+    return payload
+
+
+# ============================================================================
+# FEATURE 2: WHAT-IF DECISION SIMULATOR
+# ============================================================================
+
+
+class ScenarioBaselineRequest(_DiscoveryBaseModel):
+    role: Optional[str] = None
+    period: Optional[str] = None
+    finding_id: Optional[str] = None
+
+
+class ScenarioSimulateRequest(_DiscoveryBaseModel):
+    role: Optional[str] = None
+    baseline: dict
+    assumptions: dict
+    name: Optional[str] = None
+
+
+class ScenarioSave(_DiscoveryBaseModel):
+    name: Optional[str] = None
+    role: Optional[str] = None
+    source: str = "manual"
+    finding_id: Optional[str] = None
+    baseline: dict
+    assumptions: dict
+
+
+class ScenarioRename(_DiscoveryBaseModel):
+    name: str
+
+
+class ScenarioCompare(_DiscoveryBaseModel):
+    scenario_ids: _List[str]
+
+
+class ScenarioToInvestigation(_DiscoveryBaseModel):
+    investigation_id: str
+
+
+def _scenario_summary(s: Scenario) -> dict:
+    return {
+        "id": s.id, "name": s.name, "role": s.role, "source": s.source,
+        "finding_id": s.finding_id, "metric_key": s.metric_key, "metric_label": s.metric_label,
+        "period_label": s.period_label, "status": s.status,
+        "created_at": s.created_at.isoformat() if s.created_at else None,
+        "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+    }
+
+
+def _scenario_full(s: Scenario) -> dict:
+    d = _scenario_summary(s)
+    d.update({"baseline": s.baseline or {}, "assumptions": s.assumptions or {},
+              "results": s.results or {}})
+    return d
+
+
+@app.get("/api/v1/scenarios/capabilities", tags=["Scenarios"])
+async def scenario_capabilities(role: str = Query(default="executive")):
+    """Report which levers/views the connected schema actually supports, so the
+    UI renders only real, data-backed controls (nothing hardcoded)."""
+    from app.services.scenario_service import ScenarioService
+    try:
+        return ScenarioService(role=role).capabilities()
+    except Exception as exc:
+        logger.error("Scenario capabilities failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Capabilities probe failed: {str(exc)[:200]}")
+
+
+@app.post("/api/v1/scenarios/baseline", tags=["Scenarios"])
+async def scenario_baseline(req: ScenarioBaselineRequest):
+    """Pull a real, role-authorized observed baseline from the live database."""
+    from app.services.scenario_service import ScenarioService
+    try:
+        return ScenarioService(role=req.role or "executive").build_baseline(period=req.period)
+    except Exception as exc:
+        logger.error("Scenario baseline build failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Baseline build failed: {str(exc)[:200]}")
+
+
+@app.post("/api/v1/scenarios/simulate", tags=["Scenarios"])
+async def scenario_simulate(req: ScenarioSimulateRequest):
+    """Deterministically recompute a scenario from an observed baseline + user
+    assumptions. Not persisted: this is the live-preview math."""
+    from app.services.scenario_service import ScenarioService
+    res = ScenarioService(role=req.role or "executive").simulate(req.baseline, req.assumptions, req.name)
+    if not res.get("ok"):
+        raise HTTPException(status_code=422, detail=res.get("errors", ["invalid assumptions"]))
+    return res
+
+
+@app.post("/api/v1/scenarios", tags=["Scenarios"])
+async def save_scenario(req: ScenarioSave, db: Session = Depends(get_app_db)):
+    """Validate, compute and persist a scenario (baseline facts + assumptions +
+    calculated results) for later comparison."""
+    from app.services.scenario_service import ScenarioService
+    svc = ScenarioService(role=req.role or "executive")
+    res = svc.simulate(req.baseline, req.assumptions, req.name)
+    if not res.get("ok"):
+        raise HTTPException(status_code=422, detail=res.get("errors", ["invalid assumptions"]))
+    s = Scenario(
+        id=new_uuid(), name=(req.name or "Scenario")[:200], role=req.role or "executive",
+        source=req.source, finding_id=req.finding_id,
+        metric_key=((req.baseline or {}).get("source_metric") or {}).get("key"),
+        metric_label=((req.baseline or {}).get("source_metric") or {}).get("label"),
+        period_label=(req.baseline or {}).get("period_label"),
+        baseline=req.baseline, assumptions=req.assumptions, results=res, status="saved",
+    )
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+    _audit(db, "scenario.saved", "scenario", s.id, {"assumptions": req.assumptions, "role": s.role})
+    return _scenario_full(s)
+
+
+@app.get("/api/v1/scenarios", tags=["Scenarios"])
+async def list_scenarios(limit: int = Query(default=50, ge=1, le=200), db: Session = Depends(get_app_db)):
+    items = db.query(Scenario).order_by(Scenario.updated_at.desc()).limit(limit).all()
+    return {"count": len(items), "scenarios": [_scenario_summary(s) for s in items]}
+
+
+@app.get("/api/v1/scenarios/{scenario_id}", tags=["Scenarios"])
+async def get_scenario(scenario_id: str, db: Session = Depends(get_app_db)):
+    s = db.query(Scenario).filter(Scenario.id == scenario_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    return _scenario_full(s)
+
+
+@app.patch("/api/v1/scenarios/{scenario_id}", tags=["Scenarios"])
+async def rename_scenario(scenario_id: str, req: ScenarioRename, db: Session = Depends(get_app_db)):
+    s = db.query(Scenario).filter(Scenario.id == scenario_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    s.name = req.name[:200]
+    db.commit()
+    return _scenario_summary(s)
+
+
+@app.post("/api/v1/scenarios/{scenario_id}/duplicate", tags=["Scenarios"])
+async def duplicate_scenario(scenario_id: str, db: Session = Depends(get_app_db)):
+    s = db.query(Scenario).filter(Scenario.id == scenario_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    dup = Scenario(
+        id=new_uuid(), name=(s.name + " copy")[:200], role=s.role, source=s.source,
+        finding_id=s.finding_id, metric_key=s.metric_key, metric_label=s.metric_label,
+        period_label=s.period_label, baseline=s.baseline, assumptions=s.assumptions,
+        results=s.results, status="draft",
+    )
+    db.add(dup)
+    db.commit()
+    db.refresh(dup)
+    _audit(db, "scenario.duplicated", "scenario", dup.id, {"from": s.id})
+    return _scenario_full(dup)
+
+
+@app.delete("/api/v1/scenarios/{scenario_id}", tags=["Scenarios"])
+async def delete_scenario(scenario_id: str, db: Session = Depends(get_app_db)):
+    s = db.query(Scenario).filter(Scenario.id == scenario_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    db.delete(s)
+    db.commit()
+    _audit(db, "scenario.deleted", "scenario", scenario_id, {})
+    return {"status": "deleted", "id": scenario_id}
+
+
+@app.post("/api/v1/scenarios/compare", tags=["Scenarios"])
+async def compare_scenarios(req: ScenarioCompare, db: Session = Depends(get_app_db)):
+    """Side-by-side comparison of saved scenarios (net-revenue, margin, deltas)."""
+    out = []
+    for sid in req.scenario_ids:
+        s = db.query(Scenario).filter(Scenario.id == sid).first()
+        if not s:
+            continue
+        metrics = (s.results or {}).get("metrics", {})
+        net = metrics.get("net_revenue") or {}
+        margin = metrics.get("contribution_margin") or {}
+        out.append({
+            "id": s.id, "name": s.name, "assumptions": s.assumptions or {},
+            "net_revenue": net,
+            "contribution_margin": (margin or None),
+            "calculated_at": (s.results or {}).get("computed_at"),
+        })
+    return {"compared": len(out), "scenarios": out}
+
+
+@app.post("/api/v1/scenarios/{scenario_id}/send-to-investigation", tags=["Scenarios"])
+async def scenario_to_investigation(scenario_id: str, req: ScenarioToInvestigation,
+                                    db: Session = Depends(get_app_db)):
+    """Open a scenario as a new investigation branch carrying its assumptions."""
+    s = db.query(Scenario).filter(Scenario.id == scenario_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    inv = db.query(Investigation).filter(Investigation.id == req.investigation_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    metrics = (s.results or {}).get("metrics", {})
+    net = metrics.get("net_revenue") or {}
+    assumptions_txt = ", ".join(f"{k}={v}" for k, v in (s.assumptions or {}).items()) or "no changes"
+    question = (
+        f"Validate this what-if on {s.metric_label or 'the baseline'} ({s.period_label or 'all periods'}): "
+        f"assumptions [{assumptions_txt}] project net revenue "
+        f"{'up' if net.get('delta_abs', 0) >= 0 else 'down'} {abs(net.get('delta_pct', 0)):.1f}% "
+        f"(from {net.get('baseline')} to {net.get('scenario')}). Show the real per-segment detail "
+        f"that would need to hold for this to be true."
+    )
+    root_branch = db.query(InvestigationBranch).filter(
+        InvestigationBranch.investigation_id == inv.id, InvestigationBranch.parent_branch_id.is_(None)
+    ).order_by(InvestigationBranch.created_at.asc()).first()
+    branch = _new_branch(db, inv, title=f"Scenario: {s.name}"[:300], question=question, origin="manual",
+                         parent_branch_id=(root_branch.id if root_branch else None), segment=None, role=s.role)
+    db.commit()
+    _audit(db, "scenario.sent_to_investigation", "scenario", s.id, {"investigation_id": inv.id, "branch_id": branch.id})
+    return {"investigation_id": inv.id, "branch": _serialize_branch(branch)}
+
+
+# ============================================================================
+# FEATURE 4: PERSONALIZED EXECUTIVE BRIEFINGS
+# ============================================================================
+
+_briefing_thread = None
+_briefing_stop = None
+
+
+def _start_briefing_scheduler() -> None:
+    """Background scheduler that generates role-scoped briefings on a cadence.
+    Idempotent: the briefing signature prevents duplicate alerts per period."""
+    global _briefing_thread, _briefing_stop
+    settings = get_settings()
+    if not (settings.briefings_enabled and settings.briefing_schedule_enabled):
+        logger.info("Briefing scheduler disabled by configuration")
+        return
+    if _briefing_thread and _briefing_thread.is_alive():
+        return
+    import threading
+    _briefing_stop = threading.Event()
+
+    def _loop():
+        if _briefing_stop.wait(settings.briefing_initial_delay_seconds):
+            return
+        while not _briefing_stop.is_set():
+            try:
+                from app.services.briefing_service import run_briefings_job
+                run_briefings_job(cadence="daily", refresh=False)
+            except Exception as exc:
+                logger.error("Scheduled briefing job failed: %s", exc)
+            if _briefing_stop.wait(settings.briefing_interval_minutes * 60):
+                break
+
+    _briefing_thread = threading.Thread(target=_loop, daemon=True, name="briefing-scheduler")
+    _briefing_thread.start()
+    logger.info("Briefing scheduler started (every %s min)", settings.briefing_interval_minutes)
+
+
+class BriefingGenerateRequest(_DiscoveryBaseModel):
+    username: Optional[str] = None
+    cadence: str = "manual"
+    refresh: bool = False
+
+
+class BriefingPreferenceUpdate(_DiscoveryBaseModel):
+    username: Optional[str] = None
+    frequency: Optional[str] = None
+    enabled_categories: Optional[_List[str]] = None
+
+
+@app.get("/api/v1/briefings/inbox", tags=["Briefings"])
+async def briefing_inbox(username: str = Query(default="executive"), limit: int = Query(default=30, ge=1, le=100),
+                         db: Session = Depends(get_app_db)):
+    """The recipient's in-app briefing inbox (role-scoped, newest first)."""
+    from app.services.briefing_service import BriefingService
+    return {"username": username, "briefings": BriefingService(db).inbox(username, limit=limit)}
+
+
+@app.get("/api/v1/briefings/preferences", tags=["Briefings"])
+async def get_briefing_preferences(username: str = Query(default="executive"), db: Session = Depends(get_app_db)):
+    from app.services.briefing_service import BriefingService
+    return BriefingService(db).preferences_for(username)
+
+
+@app.put("/api/v1/briefings/preferences", tags=["Briefings"])
+async def update_briefing_preferences(req: BriefingPreferenceUpdate, db: Session = Depends(get_app_db)):
+    from app.services.briefing_service import BriefingService, DEFAULT_CATEGORIES
+    uname = req.username or "executive"
+    if req.frequency and req.frequency not in ("daily", "weekly", "disabled"):
+        raise HTTPException(status_code=422, detail="frequency must be daily, weekly or disabled")
+    if req.enabled_categories is not None:
+        bad = [c for c in req.enabled_categories if c not in DEFAULT_CATEGORIES]
+        if bad:
+            raise HTTPException(status_code=422, detail=f"unknown categories: {bad}")
+    pref = BriefingService(db).save_preference(uname, frequency=req.frequency, enabled_categories=req.enabled_categories)
+    _audit(db, "briefing.preference_updated", "briefing_preference", uname, {"frequency": pref["frequency"], "categories": pref["enabled_categories"]})
+    return pref
+
+
+@app.post("/api/v1/briefings/generate", tags=["Briefings"])
+async def generate_briefing(req: BriefingGenerateRequest, db: Session = Depends(get_app_db)):
+    """Generate one role-scoped briefing now (the same path the scheduler uses)."""
+    settings = get_settings()
+    if not settings.briefings_enabled:
+        raise HTTPException(status_code=403, detail="Briefings are disabled")
+    from app.services.briefing_service import BriefingService
+    uname = req.username or "executive"
+    try:
+        res = BriefingService(db).generate(uname, cadence=req.cadence, refresh=req.refresh)
+    except Exception as exc:
+        logger.error("Briefing generate failed: %s", exc, exc_info=True)
+        _audit(db, "briefing.generate_failed", "briefing", uname, {"error": str(exc)[:200]})
+        raise HTTPException(status_code=500, detail=f"Briefing generation failed: {str(exc)[:200]}")
+    _audit(db, "briefing.generated", "briefing", res.get("briefing_id", ""),
+           {"username": uname, "status": res.get("status"), "item_count": res.get("item_count")})
+    return res
+
+
+@app.get("/api/v1/briefings/{briefing_id}", tags=["Briefings"])
+async def get_briefing(briefing_id: str, db: Session = Depends(get_app_db)):
+    from app.services.briefing_service import BriefingService
+    b = BriefingService(db).get(briefing_id)
+    if not b:
+        raise HTTPException(status_code=404, detail="Briefing not found")
+    return b
+
+
+@app.post("/api/v1/briefings/{briefing_id}/status/{status}", tags=["Briefings"])
+async def mark_briefing(briefing_id: str, status: str, db: Session = Depends(get_app_db)):
+    from app.services.briefing_service import BriefingService
+    if status not in ("delivered", "read"):
+        raise HTTPException(status_code=422, detail="status must be delivered or read")
+    b = BriefingService(db).mark(briefing_id, status)
+    if not b:
+        raise HTTPException(status_code=404, detail="Briefing not found")
+    return b
+
+
+# ============================================================================
+# FEATURE 5: CROSS-SYSTEM INTELLIGENCE ENDPOINTS
+# ============================================================================
+
+from pydantic import BaseModel as _CSBaseModel
+
+
+class CrossSourceTableRef(_CSBaseModel):
+    connection_id: str
+    schema_name: str
+    table_name: str
+
+
+class CrossSourceCandidateQuery(_CSBaseModel):
+    left: CrossSourceTableRef
+    right: CrossSourceTableRef
+    role: str = "executive"
+
+
+class CrossSourceCandidateCreate(_CSBaseModel):
+    left_connection_id: str
+    left_schema: str
+    left_table: str
+    left_column: str
+    right_connection_id: str
+    right_schema: str
+    right_table: str
+    right_column: str
+    confidence: float = 0.0
+    evidence: dict | None = None
+    created_by: str = "executive"
+
+
+class CrossSourceConfirmRequest(_CSBaseModel):
+    confirmed_by: str = "executive"
+
+
+class CrossSourceJoinRequest(_CSBaseModel):
+    mapping_id: str
+    requestor: str = "executive"
+    left_columns: list[str] = []
+    right_columns: list[str] = []
+    join_type: str = "inner"
+
+
+def _cross_service(db: Session):
+    from app.services.cross_source_service import CrossSourceService
+    return CrossSourceService(db, get_schema_service(), get_query_executor())
+
+
+@app.get("/api/v1/cross-source/sources", tags=["Cross-Source"])
+async def cross_source_list_sources(db: Session = Depends(get_app_db)):
+    """Admin-visible catalog of configured sources with independent health."""
+    from app.services.cross_source_service import CrossSourceError
+    try:
+        return _cross_service(db).list_sources()
+    except CrossSourceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/v1/cross-source/sources/{connection_id}/catalog", tags=["Cross-Source"])
+async def cross_source_catalog(connection_id: str, role: str = Query(default="executive"),
+                               db: Session = Depends(get_app_db)):
+    """Introspect one source independently, filtered by the role's authorization."""
+    from app.services.cross_source_service import CrossSourceError
+    try:
+        return _cross_service(db).get_catalog(connection_id, role=role)
+    except CrossSourceError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/v1/cross-source/relationships/candidates", tags=["Cross-Source"])
+async def cross_source_candidates(req: CrossSourceCandidateQuery,
+                                  db: Session = Depends(get_app_db)):
+    """Infer candidate join keys between two tables across sources."""
+    from app.services.cross_source_service import CrossSourceService, TableRef, CrossSourceError
+    try:
+        svc = CrossSourceService(db, get_schema_service(), get_query_executor())
+        return svc.find_candidates(
+            TableRef(req.left.connection_id, req.left.schema_name, req.left.table_name),
+            TableRef(req.right.connection_id, req.right.schema_name, req.right.table_name),
+            role=req.role,
+        )
+    except CrossSourceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/v1/cross-source/relationships", tags=["Cross-Source"])
+async def cross_source_list_mappings(db: Session = Depends(get_app_db)):
+    return {"mappings": _cross_service(db).list_mappings()}
+
+
+@app.post("/api/v1/cross-source/relationships", tags=["Cross-Source"])
+async def cross_source_save_candidate(req: CrossSourceCandidateCreate, db: Session = Depends(get_app_db)):
+    from app.services.cross_source_service import CrossSourceError
+    try:
+        m = _cross_service(db).save_candidate(req.model_dump(), req.created_by)
+    except CrossSourceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    _audit(db, "cross_source.candidate_saved", "cross_source_mapping", m["id"],
+           {"left": m["left_column"], "right": m["right_column"], "confidence": m["confidence"]})
+    return m
+
+
+@app.post("/api/v1/cross-source/relationships/{mapping_id}/confirm", tags=["Cross-Source"])
+async def cross_source_confirm(mapping_id: str, req: CrossSourceConfirmRequest, db: Session = Depends(get_app_db)):
+    from app.services.cross_source_service import CrossSourceError
+    try:
+        m = _cross_service(db).confirm_mapping(mapping_id, req.confirmed_by)
+    except CrossSourceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    _audit(db, "cross_source.mapping_confirmed", "cross_source_mapping", mapping_id,
+           {"confirmed_by": req.confirmed_by})
+    return m
+
+
+@app.delete("/api/v1/cross-source/relationships/{mapping_id}", tags=["Cross-Source"])
+async def cross_source_delete_mapping(mapping_id: str, db: Session = Depends(get_app_db)):
+    from app.services.cross_source_service import CrossSourceError
+    try:
+        _cross_service(db).delete_mapping(mapping_id)
+    except CrossSourceError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    _audit(db, "cross_source.mapping_deleted", "cross_source_mapping", mapping_id, {})
+    return {"status": "deleted"}
+
+
+@app.post("/api/v1/cross-source/join", tags=["Cross-Source"])
+async def cross_source_join(req: CrossSourceJoinRequest, db: Session = Depends(get_app_db)):
+    """Run a controlled, independently-authorized application-side join."""
+    from app.services.cross_source_service import CrossSourceError
+    if req.join_type not in ("inner", "left", "right", "full"):
+        raise HTTPException(status_code=422, detail="join_type must be inner, left, right or full")
+    try:
+        res = _cross_service(db).run_join(
+            req.mapping_id, req.requestor, req.left_columns, req.right_columns, req.join_type,
+        )
+    except CrossSourceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    _audit(db, "cross_source.join_executed", "cross_source_mapping", req.mapping_id,
+           {"requestor": req.requestor, "ok": res.get("ok"), "rows": res.get("row_count")})
+    return res
 
 
 # ============================================================================

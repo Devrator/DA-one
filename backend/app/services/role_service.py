@@ -80,12 +80,19 @@ VERIFIED_USERS: dict[str, UserSecurityContext] = {
 }
 
 # Column restriction rules: (schema, table, column)
+# Entries under schema "sap" govern SAP S/4HANA OData entities (entity set,
+# property). They are EXAMPLE DEFAULTS for the shipped read-only analytics
+# scope — administrators should tune them to mirror SAP-side authorizations.
+# QueryPilot authz is IN ADDITION TO SAP authz, never a replacement.
 RESTRICTED_COLUMNS: dict[str, Set[Tuple[str, str, str]]] = {
     "executive": set(),
     "regional_manager": {
         ("sales", "customers", "phone"),
         ("sales", "customers", "email"),
         ("sales", "product_catalog", "cost_price"),
+        ("sap", "I_PurchaseOrderItem", "MaterialEntryPrice"),
+        ("sap", "I_BusinessPartner", "EmailAddress"),
+        ("sap", "I_BusinessPartner", "PhoneNumber"),
     },
     "sales_rep": {
         ("sales", "customers", "phone"),
@@ -93,15 +100,23 @@ RESTRICTED_COLUMNS: dict[str, Set[Tuple[str, str, str]]] = {
         ("sales", "product_catalog", "cost_price"),
         ("sales", "regional_targets", "revenue_target"),
         ("sales", "regions", "manager_name"),
+        ("sap", "I_PurchaseOrderItem", "MaterialEntryPrice"),
+        ("sap", "I_BusinessPartner", "EmailAddress"),
+        ("sap", "I_BusinessPartner", "PhoneNumber"),
+        ("sap", "I_Supplier", "SupplierAccountGroupCode"),
     },
 }
 
 # Prohibited tables per role (e.g. sales_rep cannot query regional_targets)
+# "sap" schema entries prohibit whole SAP entity sets for a role.
 PROHIBITED_TABLES_BY_ROLE: dict[str, Set[Tuple[str, str]]] = {
     "executive": set(),
     "regional_manager": set(),
     "sales_rep": {
         ("sales", "regional_targets"),
+        ("sap", "I_PurchaseOrder"),
+        ("sap", "I_PurchaseOrderItem"),
+        ("sap", "I_Supplier"),
     },
 }
 

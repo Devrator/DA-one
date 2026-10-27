@@ -83,8 +83,80 @@ class ConnectionResponse(BaseModel):
     last_tested_at: Optional[datetime] = None
     test_status: Optional[str] = None
     created_at: datetime
+    # SAP / connector fields (additive; None for PostgreSQL sources)
+    connector_type: Optional[str] = "postgresql"
+    deployment_type: Optional[str] = None
+    base_url: Optional[str] = None
+    service_path: Optional[str] = None
+    odata_version: Optional[str] = None
+    auth_mode: Optional[str] = None
+    secret_ref: Optional[str] = None
+    tls_verify: Optional[bool] = None
+    lifecycle_status: Optional[str] = None
+    last_success_at: Optional[datetime] = None
+    metadata_refreshed_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
+
+
+# ---------------------------------------------------------------------------
+# SAP S/4HANA connector
+# ---------------------------------------------------------------------------
+
+class SAPConnectionPayload(BaseModel):
+    """Shared fields for SAP create/test. `secret` is write-only: it is never
+    returned by any endpoint and is encrypted at rest immediately."""
+    deployment_type: str = Field(default="public_cloud", pattern=r"^(public_cloud|private_cloud|on_premises|hybrid)$")
+    base_url: str = Field(..., min_length=8, max_length=500)
+    service_path: str = Field(default="", max_length=500)
+    odata_version: str = Field(default="4", pattern=r"^[24]$")
+    auth_mode: str = Field(default="basic", pattern=r"^(basic|oauth_client_credentials)$")
+    username: str = Field(default="", max_length=200)
+    secret: str = Field(..., min_length=1, max_length=4096)
+    oauth_client_id: Optional[str] = Field(default=None, max_length=300)
+    oauth_scope: Optional[str] = Field(default=None, max_length=500)
+    oauth_token_url: Optional[str] = Field(default=None, max_length=500)
+    tls_verify: bool = True
+    secret_ref: Optional[str] = Field(default=None, max_length=300)
+
+    @field_validator("base_url", "oauth_token_url")
+    @classmethod
+    def _no_metadata_hosts(cls, v: Optional[str]) -> Optional[str]:
+        if not v:
+            return v
+        lowered = v.lower()
+        blocked = ["169.254.169.254", "metadata.google", "metadata.aws", "metadata.goog", "100.100.100.200"]
+        for b in blocked:
+            if b in lowered:
+                raise ValueError(f"Target address not permitted: {b}")
+        return v
+
+
+class SAPConnectionCreate(SAPConnectionPayload):
+    name: str = Field(..., min_length=1, max_length=200)
+
+
+class SAPConnectionPatch(BaseModel):
+    """Admin updates. Omit `secret` to keep the stored credential untouched."""
+    service_path: Optional[str] = Field(default=None, max_length=500)
+    odata_version: Optional[str] = Field(default=None, pattern=r"^[24]$")
+    auth_mode: Optional[str] = Field(default=None, pattern=r"^(basic|oauth_client_credentials)$")
+    username: Optional[str] = Field(default=None, max_length=200)
+    secret: Optional[str] = Field(default=None, min_length=1, max_length=4096)
+    oauth_client_id: Optional[str] = Field(default=None, max_length=300)
+    oauth_scope: Optional[str] = Field(default=None, max_length=500)
+    oauth_token_url: Optional[str] = Field(default=None, max_length=500)
+    tls_verify: Optional[bool] = None
+    secret_ref: Optional[str] = Field(default=None, max_length=300)
+
+
+class SAPPreviewRequest(BaseModel):
+    """Structured, bounded read request — never a URL. Validated against
+    discovered metadata and role authz before any HTTP call is made."""
+    select: list[str] = Field(..., min_length=1, max_length=40)
+    filter: Optional[dict[str, Any]] = None
+    orderby: Optional[str] = Field(default=None, max_length=200)
+    top: Optional[int] = Field(default=None, ge=1)
 
 
 class ConnectionTestResult(BaseModel):

@@ -3,9 +3,9 @@ import {
   Sparkles, Database, Play, BarChart3, ShieldCheck, Clock, CheckCircle2, 
   Terminal, Layers, History, Activity, AlertCircle, ChevronRight, ChevronLeft, FileSpreadsheet, 
   RefreshCw, Cpu, Server, Compass, Shield, MessageSquare, Flame, Download,
-  Coins, ShoppingBag, Users, Package, TrendingUp, Lightbulb, Search, Paperclip,
+  Coins, ShoppingBag, Users, Package, TrendingUp, Lightbulb, Search, Paperclip, Network, SlidersHorizontal,
   MoreVertical, ArrowUpRight, ArrowRight, Settings, FileText, ChevronDown, Check,
-  Bell, User, Sun, Moon, X, Lock
+  Bell, User, Sun, Moon, X, Lock, Inbox,
 } from 'lucide-react';
 import ChartWidget from './components/ChartWidget';
 import DataTable from './components/DataTable';
@@ -24,10 +24,18 @@ import LoginScreen from './components/LoginScreen';
 import ReportsView from './components/ReportsView';
 import SettingsView from './components/SettingsView';
 import DiscoverView from './components/DiscoverView';
+import InvestigationView from './components/InvestigationView';
+import ScenarioSimulatorView from './components/ScenarioSimulatorView';
+import BriefingInboxView from './components/BriefingInboxView';
+import DataSourcesView from './components/DataSourcesView';
 
 const PAGE_TITLES = {
   workspace: 'Analytics Workspace',
   discover: 'Discover & Early Warnings',
+    investigations: 'Investigation Workspace',
+  simulator: 'What-If Decision Simulator',
+  briefings: 'Personalized Briefings',
+  datasources: 'Cross-System Intelligence',
   schema: 'Schema Catalog',
   benchmark: 'Benchmark (31 Cases)',
   security: 'Security Audit (35 Attacks)',
@@ -105,6 +113,30 @@ export default function App() {
   
   // Phase 2 State: Server-Verified Roles & Multi-Turn Sessions
   const [currentRole, setCurrentRole] = useState('executive');
+    const [investigationFocusId, setInvestigationFocusId] = useState(null);
+    const [scenarioFocusFindingId, setScenarioFocusFindingId] = useState(null);
+    const handleSimulateFinding = (findingId) => {
+      setScenarioFocusFindingId(findingId || null);
+      setActiveTab('simulator');
+    };
+    const navigateToInvestigation = (invId) => {
+      setInvestigationFocusId(invId);
+      setActiveTab('investigations');
+    };
+    const handleOpenInvestigation = async (findingId) => {
+      try {
+        const res = await fetch('/api/v1/investigations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-User-Role': currentRole },
+          body: JSON.stringify({ finding_id: findingId, role: currentRole }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setInvestigationFocusId(data.id);
+          setActiveTab('investigations');
+        }
+      } catch (e) { console.error('Failed to open investigation', e); }
+    };
   const [currentSessionId, setCurrentSessionId] = useState(`sess_${Date.now().toString(36)}`);
   const [conversationTurns, setConversationTurns] = useState([]);
   const [activeContext, setActiveContext] = useState({ metric: 'Revenue', grouping: 'All Regions' });
@@ -412,6 +444,41 @@ export default function App() {
             <span>Discover</span>
           </button>
 
+          <button 
+            className={`da-nav-item ${activeTab === 'investigations' ? 'active' : ''}`}
+            onClick={() => setActiveTab('investigations')}
+            title={isSidebarCollapsed ? "Investigation Workspace" : undefined}
+          >
+            <Network size={17} />
+            <span>Investigations</span>
+          </button>
+
+          <button 
+            className={`da-nav-item ${activeTab === 'simulator' ? 'active' : ''}`}
+            onClick={() => setActiveTab('simulator')}
+            title={isSidebarCollapsed ? "What-If Decision Simulator" : undefined}
+          >
+            <SlidersHorizontal size={17} />
+            <span>What-If Simulator</span>
+          </button>
+
+          <button 
+            className={`da-nav-item ${activeTab === 'briefings' ? 'active' : ''}`}
+            onClick={() => setActiveTab('briefings')}
+            title={isSidebarCollapsed ? "Personalized Briefings" : undefined}
+          >
+            <Inbox size={17} />
+            <span>Briefings</span>
+          </button>
+
+          <button 
+            className={`da-nav-item ${activeTab === 'datasources' ? 'active' : ''}`}
+            onClick={() => setActiveTab('datasources')}
+            title={isSidebarCollapsed ? "Cross-System Intelligence" : undefined}
+          >
+            <Network size={17} />
+            <span>Data Sources</span>
+          </button>
           <button 
             className={`da-nav-item ${activeTab === 'schema' ? 'active' : ''}`}
             onClick={() => setActiveTab('schema')}
@@ -1492,7 +1559,35 @@ export default function App() {
         {/* VIEW 1b: Discover & Early Warnings */}
         {activeTab === 'discover' && (
           <div className="da-view-container">
-            <DiscoverView onExploreFurther={(q) => { setActiveTab('workspace'); handleRunQuery(q); }} />
+            <DiscoverView onExploreFurther={(q) => { setActiveTab('workspace'); handleRunQuery(q); }} onOpenInvestigation={handleOpenInvestigation} onSimulate={handleSimulateFinding} />
+          </div>
+        )}
+
+        {/* VIEW 1c: Investigation Workspace */}
+        {activeTab === 'investigations' && (
+          <div className="da-view-container">
+            <InvestigationView currentRole={currentRole} focusId={investigationFocusId} />
+          </div>
+        )}
+
+        {/* VIEW 1d: What-If Decision Simulator */}
+        {activeTab === 'simulator' && (
+          <div className="da-view-container">
+            <ScenarioSimulatorView currentRole={currentRole} focusFindingId={scenarioFocusFindingId} onOpenInvestigation={navigateToInvestigation} />
+          </div>
+        )}
+
+        {/* VIEW 1e: Personalized Executive Briefings */}
+        {activeTab === 'briefings' && (
+          <div className="da-view-container">
+            <BriefingInboxView currentRole={currentRole} onOpenInvestigation={handleOpenInvestigation} />
+          </div>
+        )}
+
+        {/* VIEW 1f: Cross-System Intelligence */}
+        {activeTab === 'datasources' && (
+          <div className="da-view-container">
+            <DataSourcesView currentRole={currentRole} />
           </div>
         )}
 

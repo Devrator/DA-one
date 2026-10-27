@@ -81,6 +81,10 @@ class SchemaProfile:
         self.status_filter_value: Optional[str] = None
         self.measures: List[Dict[str, str]] = []          # [{key, label, expr}]
         self.dimensions: List[Dict[str, str]] = []        # [{table, column, label}]
+        self.qty_col: Optional[str] = None                # detected quantity column on fact table
+        self.price_col: Optional[str] = None              # detected unit-price column on fact table
+        self.disc_col: Optional[str] = None               # detected discount-percent column on fact table
+        self.cost_col: Optional[str] = None               # detected cost column (margin scenarios), if any
         self.aliases: Dict[str, str] = {}                 # table_name -> alias
         self.extra_joins: Dict[str, tuple] = {}           # dim table -> (fk_col_on_f, ref_col)
         self.profile_notes: List[str] = []
@@ -260,6 +264,11 @@ class DiscoveryService:
         # measures: build revenue-style expression from detected numeric columns
         self._cur_profile_pk = profile.parent_pk or "order_id"
         profile.measures = self._build_measures(fact_tbl)
+        det = getattr(self, "_detected_cols", {}) or {}
+        profile.qty_col = det.get("qty")
+        profile.price_col = det.get("price")
+        profile.disc_col = det.get("disc")
+        profile.cost_col = det.get("cost")
 
         # join dimension tables reachable from fact (source 'f') and parent (source 'p') by FK
         idx = 0
@@ -310,6 +319,8 @@ class DiscoveryService:
         qty = next((n for n, l in cols.items() if any(k in l for k in ("quant", "qty", "units"))), None)
         price = next((n for n, l in cols.items() if any(k in l for k in ("price", "amount")) and "discount" not in l), None)
         disc = next((n for n, l in cols.items() if "discount" in l), None)
+        cost = next((n for n, l in cols.items() if "cost" in l), None)
+        self._detected_cols = {"qty": qty, "price": price, "disc": disc, "cost": cost}
         measures: List[Dict[str, str]] = []
         if qty and price:
             expr = f"SUM(f.{qty} * f.{price})"

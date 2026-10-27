@@ -71,6 +71,55 @@ class Settings(BaseSettings):
     discovery_underperform_z_threshold: float = 1.0
     discovery_top_n_dimensions: int = 5
 
+    # Personalized Executive Briefings (Feature 4)
+    briefings_enabled: bool = True
+    briefing_schedule_enabled: bool = False        # off by default; enable for real cadence
+    briefing_interval_minutes: int = 1440          # daily cadence default
+    briefing_initial_delay_seconds: int = 30
+    briefing_max_items: int = 8                     # top-N ranked findings per briefing
+    briefing_stale_after_hours: int = 48            # suppress findings older than this as stale
+    briefing_low_value_score: float = 5.0           # rank-score floor for 'low-value' suppression
+
+    # Cross-System Intelligence (Feature 5)
+    cross_source_enabled: bool = True
+    cross_source_max_rows_per_source: int = 2000     # hard bound per source before app-side join
+    cross_source_statement_timeout_ms: int = 15000   # per-source read timeout
+    cross_source_max_joined_rows: int = 1000         # bound on returned joined rows
+    # Bootstrap secondary source so the two-source demo works out of the box.
+    # Admins can also register additional sources via the Connections registry.
+    cross_source_secondary_enabled: bool = True
+    cross_source_secondary_name: str = "Inventory (Warehouse Stock)"
+    cross_source_secondary_host: str = "localhost"
+    cross_source_secondary_port: int = 5433
+    cross_source_secondary_db: str = "querypilot_inventory"
+    cross_source_secondary_user: str = "inventory_readonly"
+    cross_source_secondary_password: str = "inventory_readonly_dev"
+    cross_source_secondary_schema: str = "inventory"
+
+    # Credential encryption at rest (Feature: SAP connector + Connection registry)
+    # A Fernet key (urlsafe base64, 32 bytes). If empty it is DERIVED from
+    # app_secret_key so development works out of the box; production should set
+    # CREDENTIAL_ENCRYPTION_KEY explicitly and keep the key OUTSIDE the database.
+    credential_encryption_key: str = Field(default="")
+    # Comma-separated older Fernet keys kept only for decrypt during rotation.
+    credential_encryption_key_previous: str = Field(default="")
+
+    # SAP S/4HANA connector (read-only OData analytics)
+    sap_enabled: bool = True
+    sap_default_timeout_seconds: float = 20.0
+    sap_max_timeout_seconds: float = 120.0
+    sap_max_records_fetched: int = 5000        # absolute cap for a single fetch
+    sap_default_page_size: int = 500           # bounded $top per round-trip
+    sap_max_response_bytes: int = 8_000_000    # per-response size limit
+    sap_max_retries: int = 3
+    sap_backoff_base_seconds: float = 0.5
+    sap_backoff_max_seconds: float = 20.0
+    sap_metadata_cache_seconds: int = 900
+    # Administrator-approved SAP hosts (comma-separated exact hostnames or
+    # *.suffix wildcards). Empty means only loopback test hosts are allowed and
+    # every external host must be explicitly approved (fail-closed SSRF guard).
+    sap_allowed_hosts: str = Field(default="")
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.app_cors_origins.split(",") if o.strip()]
